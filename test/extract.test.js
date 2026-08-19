@@ -56,3 +56,25 @@ test('resolveGameRoots: direct MV, nested single child, multi-game archive', () 
   const d3 = tmp(); mkMV(d3, 'g1'); mkMV(d3, 'g2');
   assert.deepEqual(resolveGameRoots(d3).sort(), [path.join(d3, 'g1'), path.join(d3, 'g2')]);
 });
+
+test('resolveGameRoots: edge cases — file input, depth limit, dot-dirs, absorption', () => {
+  const mkMV = (base) => {
+    fs.mkdirSync(path.join(base, 'www'), { recursive: true });
+    fs.writeFileSync(path.join(base, 'package.json'), '{}');
+    fs.writeFileSync(path.join(base, 'www/index.html'), 'x');
+  };
+  const fd = tmp();
+  const f = path.join(fd, 'game.zip');
+  fs.writeFileSync(f, 'not-a-dir');
+  assert.deepEqual(resolveGameRoots(f), []);                       // file input → []
+
+  const d4 = tmp(); mkMV(path.join(d4, 'a/b/c/d'));
+  assert.deepEqual(resolveGameRoots(d4), []);                      // depth-4 nesting → not found
+
+  const dh = tmp(); mkMV(path.join(dh, '.hidden/game'));
+  assert.deepEqual(resolveGameRoots(dh), []);                      // dot-dir skipped
+
+  const da = tmp(); mkMV(da);                                      // outer root absorbs inner match
+  mkMV(path.join(da, 'inner'));
+  assert.deepEqual(resolveGameRoots(da), [da]);
+});

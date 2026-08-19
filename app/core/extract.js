@@ -4,11 +4,8 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 
-// Split-volume names (zip.001, 7z.002, part1.rar) need joining before 7zz can
-// open them; plain single-file archives are handled directly, so they are null.
-// NOTE: the reference implementation returned 'archive' for plain .zip/.7z;
-// 'split' for volume sets, 'archive' for plain archives (engine.js branches on
-// both), null otherwise.
+// 'split' for multi-part volume sets (joined by name pattern only — refused
+// upstream), 'archive' for plain .zip/.7z/.rar, null otherwise.
 function archiveKind(name) {
   if (/\.(zip|7z|rar)\.\d+$/i.test(name) || /\.part\d+\.rar$/i.test(name)) return 'split';
   if (/\.(zip|7z|rar)$/i.test(name)) return 'archive';
@@ -19,10 +16,11 @@ function run7zz(bin, args) {
   return new Promise((resolve) => {
     const p = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
+    const timer = setTimeout(() => p.kill('SIGKILL'), 120000);
     p.stdout.on('data', c => { out += c; if (out.length > 2e6) p.kill(); });
     p.stderr.on('data', c => { err += c; if (err.length > 2e6) p.kill(); });
-    p.on('error', e => resolve({ code: -1, out, err: String(e) }));
-    p.on('close', code => resolve({ code, out, err }));
+    p.on('error', e => { clearTimeout(timer); resolve({ code: -1, out, err: String(e) }); });
+    p.on('close', code => { clearTimeout(timer); resolve({ code, out, err }); });
   });
 }
 

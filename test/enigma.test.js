@@ -2,8 +2,20 @@
 const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs'), os = require('os'), path = require('path');
-const { isPacked, unpack } = require('../app/core/enigma');
+const { isPacked, unpack, toPosix, safeJoin } = require('../app/core/enigma');
 const { synthPE } = require('./helpers/fixtures');
+
+test('toPosix: Windows separators become forward slashes', () => {
+  assert.equal(toPosix('a\\b\\c.png'), 'a/b/c.png');
+  assert.equal(toPosix('plain.png'), 'plain.png');
+});
+
+test('safeJoin: rejects traversal, accepts normal rel, empty rel → base', () => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sj-'));
+  assert.throws(() => safeJoin(d, '../escape'), /unsafe path/);
+  assert.equal(safeJoin(d, 'a/b.png'), path.join(d, 'a/b.png'));
+  assert.equal(safeJoin(d, ''), d);
+});
 
 test('isPacked: true for .enigma1 section, false otherwise, null for non-PE', () => {
   const packed = synthPE({ sections: [{ name: '.enigma1' }, { name: '.enigma2' }] });

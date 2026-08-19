@@ -76,10 +76,13 @@ function analyze(dir) {
 
   // detectedNW resolution ladder: browser NW stamps → node-module NW stamps →
   // node.js strings → chromium full versions (either tier)
-  const allNW = [...browser, ...nodeMods].filter(e => e.kind === 'nw' && nwmap.versions[e.value])
-    .sort((a, b) => cmpVer(b.value, a.value));
-  if (allNW.length) {
-    detectedNW = allNW[0].value;
+  const known = (e) => e.kind === 'nw' && nwmap.versions[e.value];
+  const browserNW = browser.filter(known).sort((a, b) => cmpVer(b.value, a.value));
+  const nodeNW = nodeMods.filter(known).sort((a, b) => cmpVer(b.value, a.value));
+  if (browserNW.length) {
+    detectedNW = browserNW[0].value;
+  } else if (nodeNW.length) {
+    detectedNW = nodeNW[0].value;
   } else {
     const nodes = [...browser, ...nodeMods].filter(e => e.kind === 'node').sort((a, b) => cmpVer(b.value, a.value));
     const nodeHit = nodes.find(n => nwmap.byNode[n.value]);
