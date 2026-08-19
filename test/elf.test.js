@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { clearExecStack, elfArch, stringStamps, runtimeStamps } = require('../app/core/elf');
+const { clearExecStack, elfArch, stringStamps, runtimeStamps, parseHeader } = require('../app/core/elf');
 
 function synthElf64(machine, stackFlags) {
   const phoff = 0x40, phentsize = 0x38, phnum = 1;
@@ -21,13 +21,43 @@ function synthElf64(machine, stackFlags) {
   return buf;
 }
 
+function synthElf32(machine, stackFlags) {
+  const phoff = 0x34, phentsize = 0x20, phnum = 1;
+  const buf = Buffer.alloc(phoff + phentsize);
+  buf.write('\x7fELF', 0, 'ascii');
+  buf[4] = 1; buf[5] = 1;              // 32-bit LE
+  buf.writeUInt16LE(0x03, 16);         // ET_DYN
+  buf.writeUInt16LE(machine, 18);
+  buf.writeUInt32LE(phoff, 28);
+  buf.writeUInt16LE(phentsize, 42);
+  buf.writeUInt16LE(phnum, 44);
+  buf.writeUInt32LE(0x6474e551, phoff);        // PT_GNU_STACK
+  buf.writeUInt32LE(stackFlags, phoff + 4);
+  return buf;
+}
+
 test('clearExecStack clears PF_X on PT_GNU_STACK, idempotent', () => {
   const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'elf-')), 'lib.so');
-  fs.writeFileSync(f, synthElf64(0x3e, 0x7));            // RWX
+  fs.writeFileSync(f, synthElf64(0x3e, 0x7), { mode: 0o755 });  // RWX
   assert.equal(clearExecStack(f), true);
   const re = fs.readFileSync(f);
   assert.equal(re.readUInt32LE(0x40 + 4) & 1, 0);        // X bit gone, rest kept
-  assert.equal(clearExecStack(f), false);                // second run: no change
+  assert.ok(fs.statSync(f).mode & 0o111);                 // exec bits survive the rewrite
+  assert.equal(clearExecStack(f), false);                 // second run: no change
+});
+
+test('ELF32: parseHeader arch + clearExecStack clears PF_X, idempotent', () => {
+  assert.equal(parseHeader(synthElf32(0xb7, 0x6)).arch, 'arm64');
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'elf32-')), 'lib.so');
+  fs.writeFileSync(f, synthElf32(0x03, 0x7));            // RWX, i386
+  assert.equal(clearExecStack(f), true);
+  const re = fs.readFileSync(f);
+  assert.equal(re.readUInt32LE(0x34 + 4) & 1, 0);        // X bit gone, rest kept
+  assert.equal(clearExecStack(f), false);                // idempotent
+});
+
+test('parseHeader rejects short ELF64 buffers (52-57 bytes)', () => {
+  assert.equal(parseHeader(synthElf64(0x3e, 0x7).subarray(0, 56)), null);
 });
 
 test('elfArch + runtimeStamps on real runtimes', { skip: !fs.existsSync('runtimes/nwjs-v0.29.0-linux-x64/nw') }, () => {

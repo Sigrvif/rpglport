@@ -3,11 +3,14 @@
 // version stamps (node.js/vX + Chrome/N), and machine arch. ELF32+ELF64 LE.
 const fs = require('fs');
 const path = require('path');
+const { nodeStamps, chromeStamps } = require('./pe');
 const PT_GNU_STACK = 0x6474e551, PF_X = 1;
 
 function parseHeader(buf) {
-  if (!Buffer.isBuffer(buf) || buf.length < 52 || buf.toString('ascii', 0, 4) !== '\x7fELF') return null;
+  if (!Buffer.isBuffer(buf) || buf.toString('ascii', 0, 4) !== '\x7fELF') return null;
   if (buf[5] !== 1) return null; // little-endian only
+  if (buf[4] !== 1 && buf[4] !== 2) return null;
+  if (buf.length < (buf[4] === 2 ? 64 : 52)) return null;
   const is64 = buf[4] === 2;
   const machine = buf.readUInt16LE(18);
   const arch = machine === 0x3e ? 'x64' : machine === 0xb7 ? 'arm64' : null;
@@ -50,7 +53,7 @@ function clearExecStack(file) {
   if (changed) {
     const mode = fs.statSync(file).mode;
     fs.writeFileSync(file, buf, { mode });
-    fs.chmodSync(file, mode); // writeFileSync may drop exec bits
+    fs.chmodSync(file, mode); // defensive: keep exec bits stable across the rewrite
   }
   return changed;
 }
@@ -59,10 +62,7 @@ function clearExecStack(file) {
 function stringStamps(file) {
   let buf;
   try { buf = fs.readFileSync(file); } catch { return { nodes: [], chromes: [] }; }
-  const s = buf.toString('latin1');
-  const nodes = [], chromes = [];
-  for (const m of s.matchAll(/node\.js\/v(\d+\.\d+\.\d+)/g)) if (!nodes.includes(m[1])) nodes.push(m[1]);
-  for (const m of s.matchAll(/Chrome\/(\d+)\./g)) if (!chromes.includes(m[1])) chromes.push(m[1]);
+  const nodes = nodeStamps(buf), chromes = chromeStamps(buf).majors;
   return { nodes, chromes };
 }
 

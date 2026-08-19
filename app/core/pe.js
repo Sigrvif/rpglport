@@ -54,6 +54,7 @@ function nodeStamps(buf) {
   return out;
 }
 
+// candidates only — consumers must intersect with nwmap.byChromium; binary dumps contain IP-like quadruples
 function chromeStamps(buf) {
   const majors = [], fulls = [];
   const s = buf.toString('latin1');

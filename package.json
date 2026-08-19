@@ -2,6 +2,7 @@
   "name": "rpgport",
   "main": "app/index.html",
   "chromium-args": "--disable-devtools",
+  "scripts": { "test": "node --test test/*.test.js" },
   "window": {
     "title": "RPGPort",
     "width": 1100,
