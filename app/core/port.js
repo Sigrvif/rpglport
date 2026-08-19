@@ -84,8 +84,9 @@ async function buildPort(opts) {
   let finalDir = path.join(outParent, dirName);
   if (fs.existsSync(finalDir)) {
     if (onExists === 'refuse') throw new Error(`output exists: ${finalDir}`);
-    if (onExists === 'overwrite') fs.rmSync(finalDir, { recursive: true, force: true });
-    else {
+    // overwrite defers deletion of the old port until the new one is fully
+    // built in tmp — a failed build must not destroy the previous output
+    if (onExists !== 'overwrite') {
       let n = 2;
       while (fs.existsSync(`${finalDir}-${n}`)) n++;
       finalDir = `${finalDir}-${n}`;
@@ -195,6 +196,7 @@ async function buildPort(opts) {
     ];
     fs.writeFileSync(path.join(tmp, 'NOTES.txt'), `${lines.join('\n')}\n`);
 
+    if (onExists === 'overwrite') fs.rmSync(finalDir, { recursive: true, force: true });
     fs.renameSync(tmp, finalDir);
     return { finalDir, notes, warnings };
   } catch (e) {

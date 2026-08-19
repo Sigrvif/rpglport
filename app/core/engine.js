@@ -32,14 +32,15 @@ async function analyzeInput(inputPath, { sevenZip }) {
       // compiled-MV "app.nw" bundle (spec §7): unzip via 7zz, re-analyze contents
       if (card.info && card.info.flags.includes('app-nw') && sevenZip) {
         try {
-          const dest = fs.mkdtempSync(path.join(fs.mkdirSync(TMP(), { recursive: true }), 'appnw-'));
+          fs.mkdirSync(TMP(), { recursive: true });
+          const dest = fs.mkdtempSync(path.join(TMP(), 'appnw-'));
           const ex = await extractArchive(sevenZip, path.join(root, 'app.nw'), dest);
           if (ex.ok) {
             const inner = analyze(dest);
             if (inner.engine) {
               card.info = inner;
               card.gameDir = dest;
-              card.extractDir = dest;                                  // cleaned up per settings
+              card.extractDir = dest;                                  // GUI's doPost cleans this up after porting per settings.keepExtracted
               card.warnings.push('app.nw payload extracted for porting');
             }
           }
@@ -61,21 +62,30 @@ async function analyzeInput(inputPath, { sevenZip }) {
       mkCard({ name: path.basename(inputPath), error: t.reason, warnings: [] });
       return { cards };
     }
-    const dest = fs.mkdtempSync(path.join(fs.mkdirSync(TMP(), { recursive: true }), 'x-'));
+    fs.mkdirSync(TMP(), { recursive: true });
+    const dest = fs.mkdtempSync(path.join(TMP(), 'x-'));
     const ex = await extractArchive(sevenZip, inputPath, dest);
     if (!ex.ok) { mkCard({ name: path.basename(inputPath), error: 'extraction failed', warnings: [] }); return { cards }; }
     for (const root of resolveGameRoots(dest)) {
-      cards.push(analyzeCard(root, 'archive', { extractDir: dest }));  // cleaned up per settings
+      cards.push(analyzeCard(root, 'archive', { extractDir: dest }));  // GUI's doPost cleans this up after porting per settings.keepExtracted
     }
     if (!cards.length) mkCard({ name: path.basename(inputPath), error: 'no game found in archive', warnings: [] });
     return { cards };
   }
   if (/\.(exe|bin)$/i.test(inputPath)) {
-    let pe = null;
-    try { pe = fs.readFileSync(inputPath); } catch { /* fallthrough */ }
-    const packed = enigma.isPacked(pe);
+    let packed = false;
+    try {
+      // read at most the first 2 MiB — the PE/section headers we probe for
+      // .enigma1 live near the file start, and a packed exe can be ~1 GB
+      const fd = fs.openSync(inputPath, 'r');
+      const head = Buffer.alloc(Math.min(fs.fstatSync(fd).size, 2 * 1024 * 1024));
+      fs.readSync(fd, head, 0, head.length, 0);
+      fs.closeSync(fd);
+      packed = enigma.isPacked(head);
+    } catch { /* fallthrough */ }
     if (packed) {
-      const out = fs.mkdtempSync(path.join(fs.mkdirSync(TMP(), { recursive: true }), 'enig-'));
+      fs.mkdirSync(TMP(), { recursive: true });
+      const out = fs.mkdtempSync(path.join(TMP(), 'enig-'));
       const r = await enigma.unpack(inputPath, out);
       for (const root of resolveGameRoots(out)) {
         cards.push(analyzeCard(root, 'enigma', { extractDir: out, warnings: [`EnigmaVB ${r.enigmaVersion}: ${r.fileCount} files unpacked`] }));
@@ -91,6 +101,7 @@ async function analyzeInput(inputPath, { sevenZip }) {
 }
 
 async function portCard(card, opts) {
+  if (!card.info || !card.info.payloadRoot) throw new Error('card has no analyzable game payload');
   if (!card.scan) card.scan = card.info.payloadRoot ? scan(card.info.payloadRoot) : { fixes: [], duplicates: [], conflicts: [], missing: [], counts: { fixes: 0, warnings: 0 } };
   return buildPort({
     gameDir: card.gameDir, info: card.info, scan: card.scan,

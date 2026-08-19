@@ -76,9 +76,17 @@ function choose(poolIn, detectedNW, engine, engineVersion, override) {
     notes.push(`exact match ${detectedNW}`);
   } else {
     const newer = pool.filter(p => !detectedNW || cmpVer(p.version, detectedNW) > 0);
-    runtime = newer.length ? newer[0] : pool[pool.length - 1];
-    if (detectedNW) notes.push(`exact ${detectedNW} not in pool; using nearest newer ${runtime.version}`);
-    else notes.push(`no version detected; using newest ${runtime.version}`);
+    if (newer.length) {
+      runtime = newer[0];
+      if (detectedNW) notes.push(`exact ${detectedNW} not in pool; using nearest newer ${runtime.version}`);
+      else notes.push(`no version detected; using newest ${runtime.version}`);
+    } else {
+      // nothing in the pool is ≥ the detected version: the fallback to the
+      // pool's newest is a DOWNGRADE vs what the game shipped with
+      runtime = pool[pool.length - 1];
+      notes.push(`no runtime ≥ detected ${detectedNW} in pool; DOWNGRADING to newest available ${runtime.version}`);
+      warnings.push(`downgrade from detected ${detectedNW} to ${runtime.version}: older Chromium than the game shipped with — test thoroughly`);
+    }
   }
   if (engine === 'MZ' && cmpVer(runtime.version, MZ_FLOOR) < 0) {
     return { runtime: null, notes, warnings, refused: `MZ needs NW.js >= ${MZ_FLOOR} (Chromium 80+); ${runtime.version} is too old — import a newer runtime` };

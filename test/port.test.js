@@ -89,3 +89,23 @@ test('cancel token stops at file boundary and cleans temp dir', { skip: !haveRT 
   await assert.rejects(() => p, /cancel/i);
   assert.equal(fs.readdirSync(path.join(base, 'out')).filter(n => n.startsWith('.tmp-')).length, 0);
 });
+
+test('buildPort MZ layout + duplicate materialization', { skip: !haveRT }, async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'port4-'));
+  const g = path.join(base, 'MZ_Game');
+  fs.mkdirSync(path.join(g, 'img/pictures'), { recursive: true });
+  fs.writeFileSync(path.join(g, 'index.html'), '<html></html>');
+  fs.writeFileSync(path.join(g, 'package.json'), JSON.stringify({ main: 'index.html' }));
+  fs.writeFileSync(path.join(g, 'img/pictures/Shot.png'), 'x');
+  const r = await buildPort({
+    gameDir: g,
+    info: { engine: 'MZ', payloadRoot: g },
+    scan: { fixes: [], duplicates: [{ target: 'img/pictures/Shot.png', as: 'img/pictures/shot.png' }], conflicts: [], missing: [], counts: { fixes: 1, warnings: 0 } },
+    runtimeDir: RT, outParent: path.join(base, 'out'), dirName: 'MZ_Game (Linux)', onExists: 'refuse',
+  });
+  assert.ok(fs.existsSync(path.join(r.finalDir, 'index.html')));
+  assert.ok(fs.existsSync(path.join(r.finalDir, 'img/pictures/Shot.png')));
+  assert.ok(fs.existsSync(path.join(r.finalDir, 'img/pictures/shot.png')));   // materialized duplicate
+  const same = fs.statSync(path.join(r.finalDir, 'img/pictures/shot.png'));
+  assert.ok(same.nlink >= 2 || same.blocks > 0);                              // hardlink or copy fallback
+});

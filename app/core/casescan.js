@@ -111,16 +111,47 @@ function collectRefs(payloadRoot) {
   return { refCounts, scanErrors };
 }
 
+// Base of a lower-cased rel path = dirname + basename without its final
+// extension. Extension probing harvests several candidates per base
+// (img/faces/Ghost.png/.jpg/.jpeg); missing-reporting groups by this base.
+function baseOf(lower) {
+  const slash = lower.lastIndexOf('/');
+  const dir = slash === -1 ? '' : lower.slice(0, slash);
+  const name = slash === -1 ? lower : lower.slice(slash + 1);
+  const dot = name.lastIndexOf('.');
+  const stem = dot <= 0 ? name : name.slice(0, dot);
+  return dir ? `${dir}/${stem}` : stem;
+}
+
 function scan(payloadRoot) {
   const { files } = indexTree(payloadRoot);
   const { refCounts, scanErrors } = collectRefs(payloadRoot);
+
+  // Disk bases: every prefix ending just before ANY dot in a file's basename,
+  // so "any key starting with dir/base + '.'" is an exact set lookup.
+  const diskBases = new Set();
+  for (const key of files.keys()) {
+    const slash = key.lastIndexOf('/');
+    const dir = slash === -1 ? '' : key.slice(0, slash);
+    const name = slash === -1 ? key : key.slice(slash + 1);
+    let idx = -1;
+    while ((idx = name.indexOf('.', idx + 1)) !== -1) {
+      const stem = name.slice(0, idx);
+      diskBases.add(dir ? `${dir}/${stem}` : stem);
+    }
+  }
+
   const fixes = [], duplicates = [], conflicts = [], missing = [];
+  const missingByBase = new Map(); // base → Map(refAsWritten → count)
   for (const [lower, casingMap] of refCounts) {
     const onDisk = files.get(lower);
     if (!onDisk) {
-      let best = null, bestN = -1;
-      for (const [c, n] of casingMap) if (n > bestN) { best = c; bestN = n; }
-      missing.push(best);
+      // A probed candidate with no exact disk match only counts as missing
+      // when NO extension-sibling of the same base exists on disk.
+      const base = baseOf(lower);
+      if (!missingByBase.has(base)) missingByBase.set(base, new Map());
+      const agg = missingByBase.get(base);
+      for (const [c, n] of casingMap) agg.set(c, (agg.get(c) || 0) + n);
       continue;
     }
     if (onDisk.length > 1) { conflicts.push({ files: onDisk }); continue; }
@@ -136,6 +167,14 @@ function scan(payloadRoot) {
     // the old disk casing when it was itself referenced (otherwise that
     // reference dangles after the rename)
     for (const c of casingMap.keys()) if (c !== canonical) duplicates.push({ target: canonical, as: c });
+  }
+  // One missing entry per base: the most-referenced casing across ALL of that
+  // base's probed candidates (first-seen wins ties, matching probe order).
+  for (const [base, agg] of missingByBase) {
+    if (diskBases.has(base)) continue;                                  // sibling on disk → not missing
+    let best = null, bestN = -1;
+    for (const [c, n] of agg) if (n > bestN) { best = c; bestN = n; }
+    missing.push(best);
   }
   return {
     fixes, duplicates, conflicts, missing, scanErrors,

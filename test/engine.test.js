@@ -39,6 +39,14 @@ test('PortQueue serializes; per-job cancel drops queued job', async () => {
   await late.promise.then(() => assert.fail('should reject'), e => assert.match(e.message, /cancel/i));
 });
 
+test('PortQueue: a failed job does not poison the chain', async () => {
+  const q = new PortQueue();
+  const bad = q.enqueue(() => Promise.reject(new Error('boom')));
+  const good = q.enqueue(() => Promise.resolve('ok'));
+  await bad.promise.then(() => assert.fail('should reject'), e => assert.match(e.message, /boom/));
+  assert.equal(await good.promise, 'ok');
+});
+
 test('selftest passes on dev layout', { skip: !fs.existsSync(SZ) }, async () => {
   const r = await selftest(process.cwd());
   assert.equal(r.ok, true, JSON.stringify(r.checks.filter(c => !c.ok)));

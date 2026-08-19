@@ -65,6 +65,7 @@ test('case-distinct files → conflict; unknown ref → missing', () => {
   assert.equal(r.conflicts.length, 1);
   assert.ok(r.conflicts[0].files.includes('img/faces/Actor1.png'));
   assert.ok(r.missing.includes('img/faces/Ghost.png'));
+  assert.equal(r.missing.length, 1);                                 // all probed extensions of one base → one entry
 });
 
 test('literal scan catches plugin paths (backslash + non-ASCII); audio via literal only', () => {

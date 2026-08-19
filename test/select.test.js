@@ -42,6 +42,14 @@ test('choose: MV <1.6.0 autoplay warning on modern chromium; old-runtime note; e
   assert.ok(choose([], '0.29.0', 'MV', '1.6.1').refused);
 });
 
+test('choose: downgrade note+warning when nothing in pool is ≥ detection', () => {
+  const pool = [P('0.29.0', 65), P('0.48.4', 85)];
+  const r = choose(pool, '0.60.0', 'MV', '1.6.1');
+  assert.equal(r.runtime.version, '0.48.4');
+  assert.ok(r.notes.some(n => /DOWNGRAD/i.test(n)));
+  assert.ok(r.warnings.some(w => /downgrade/i.test(w)));
+});
+
 test('choose: override picks named runtime from pool', () => {
   const pool = [P('0.29.0', 65), P('0.48.4', 85)];
   assert.equal(choose(pool, '0.29.0', 'MV', '1.6.1', '0.48.4').runtime.version, '0.48.4');
