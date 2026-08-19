@@ -1,0 +1,10 @@
+bin/7zz
+_host/
+runtimes/
+dist/
+test/tmp/
+/nw
+/lib
+*.tar.gz
+*.tar.xz
+.DS_Store

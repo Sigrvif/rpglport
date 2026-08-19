@@ -1,0 +1,13 @@
+{
+  "name": "rpgport",
+  "main": "app/index.html",
+  "chromium-args": "--disable-devtools",
+  "window": {
+    "title": "RPGPort",
+    "width": 1100,
+    "height": 780,
+    "min_width": 800,
+    "min_height": 600,
+    "icon": "app/icon.png"
+  }
+}
