@@ -132,7 +132,10 @@ function scan(payloadRoot) {
     const tied = ranked.filter(e => e[1] === topCount).length > 1;
     const canonical = tied ? actual : ranked[0][0];
     if (canonical !== actual) fixes.push({ actual, ref: canonical });
-    for (const c of others) if (c !== canonical) duplicates.push({ target: canonical, as: c });
+    // materialize every referenced casing except the canonical one — including
+    // the old disk casing when it was itself referenced (otherwise that
+    // reference dangles after the rename)
+    for (const c of casingMap.keys()) if (c !== canonical) duplicates.push({ target: canonical, as: c });
   }
   return {
     fixes, duplicates, conflicts, missing, scanErrors,

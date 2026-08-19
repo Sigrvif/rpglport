@@ -46,6 +46,16 @@ test('majority casing wins, minority materialized; tie keeps disk casing', () =>
   assert.deepEqual(r.duplicates, [{ target: 'img/pictures/Shot.png', as: 'img/pictures/shot.png' }, { target: 'img/pictures/Shot.png', as: 'img/pictures/SHOT.png' }]);
 });
 
+test('referenced minority DISK casing is materialized after majority rename', () => {
+  const root = mkGame({
+    'img/pictures/Shot.png': 'x',
+    'data/a.json': JSON.stringify([{ pictureName: 'shot' }, { pictureName: 'shot' }, { pictureName: 'Shot' }]),
+  });
+  const r = scan(root);
+  assert.deepEqual(r.fixes, [{ actual: 'img/pictures/Shot.png', ref: 'img/pictures/shot.png' }]);
+  assert.deepEqual(r.duplicates, [{ target: 'img/pictures/shot.png', as: 'img/pictures/Shot.png' }]);
+});
+
 test('case-distinct files → conflict; unknown ref → missing', () => {
   const root = mkGame({
     'img/faces/Actor1.png': 'a', 'img/faces/ACTOR1.png': 'b',
