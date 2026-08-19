@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>RPGPort</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <div id="poolIndicator" title="Runtime pool">pool: …</div>
+    <div class="spacer"></div>
+    <button id="btnPick" title="Pick folders or archives">Add…</button>
+    <button id="btnSettings">Settings</button>
+  </header>
+
+  <div id="dropzone">
+    <div class="dz-inner">
+      <strong>Drop game folders or archives here</strong>
+      <span>RPG Maker MV / MZ (Windows) · .zip · .7z · .rar · EnigmaVB-packed .exe</span>
+      <span class="hint">Multiple inputs welcome — one card per game. Everything runs offline.</span>
+    </div>
+  </div>
+
+  <main id="queue"></main>
+
+  <dialog id="settingsDlg">
+    <h3>Settings</h3>
+    <label>Default output folder <input id="setOutDir" type="text" style="width:100%"></label>
+    <label><input id="setKeepExtracted" type="checkbox"> Keep extracted archive copies</label>
+    <fieldset>
+      <legend>Runtime pool <button id="btnImport" class="mini">Import nwjs tarball…</button></legend>
+      <div id="poolList"></div>
+    </fieldset>
+    <div class="row">
+      <button id="setSave">Save</button>
+      <button id="setClose">Close</button>
+    </div>
+  </dialog>
+
+  <div id="toast"></div>
+  <input id="filePick" type="file" multiple hidden>
+  <script src="ui.js"></script>
+</body>
+</html>
