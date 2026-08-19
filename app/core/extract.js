@@ -7,9 +7,11 @@ const { spawn } = require('child_process');
 // Split-volume names (zip.001, 7z.002, part1.rar) need joining before 7zz can
 // open them; plain single-file archives are handled directly, so they are null.
 // NOTE: the reference implementation returned 'archive' for plain .zip/.7z;
-// the spec test asserts null there — test wins (strict TDD).
+// 'split' for volume sets, 'archive' for plain archives (engine.js branches on
+// both), null otherwise.
 function archiveKind(name) {
   if (/\.(zip|7z|rar)\.\d+$/i.test(name) || /\.part\d+\.rar$/i.test(name)) return 'split';
+  if (/\.(zip|7z|rar)$/i.test(name)) return 'archive';
   return null;
 }
 

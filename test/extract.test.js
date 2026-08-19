@@ -13,8 +13,10 @@ test('archiveKind detects split volumes by name', () => {
   assert.equal(archiveKind('game.zip.001'), 'split');
   assert.equal(archiveKind('game.7z.002'), 'split');
   assert.equal(archiveKind('game.part1.rar'), 'split');
-  assert.equal(archiveKind('game.7z'), null);
-  assert.equal(archiveKind('game.zip'), null);
+  assert.equal(archiveKind('game.7z'), 'archive');
+  assert.equal(archiveKind('game.zip'), 'archive');
+  assert.equal(archiveKind('game.rar'), 'archive');
+  assert.equal(archiveKind('readme.txt'), null);
 });
 
 test('testArchive/extractArchive round trip', { skip: !has7zz }, async () => {
