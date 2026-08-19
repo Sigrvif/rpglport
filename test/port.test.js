@@ -18,6 +18,9 @@ function mkMV(base, name = 'Test Game') {
   fs.writeFileSync(path.join(g, 'www/index.html'), '<html>game</html>');
   fs.writeFileSync(path.join(g, 'www/img/faces/Actor1.PNG'), 'png');
   fs.writeFileSync(path.join(g, 'www/data/Actors.json'), JSON.stringify([{ faceName: 'Actor1' }]));
+  fs.writeFileSync(path.join(g, 'readme.txt'), 'hello');
+  fs.mkdirSync(path.join(g, 'saves'), { recursive: true });
+  fs.writeFileSync(path.join(g, 'saves/file1.rpgsave'), 'save');
   return g;
 }
 
@@ -47,7 +50,10 @@ test('buildPort end-to-end on real runtime', { skip: !haveRT }, async () => {
   assert.ok(fs.statSync(path.join(port, 'nw')).mode & 0o111);
   assert.ok(!fs.existsSync(path.join(port, 'Game.exe')));
   assert.ok(!fs.existsSync(path.join(port, 'node.dll')));
-  assert.ok(!fs.existsSync(path.join(port, 'icudtl.dat')));
+  assert.ok(fs.existsSync(path.join(port, 'icudtl.dat')));                     // runtime's own, required
+  assert.ok(fs.existsSync(path.join(port, 'locales')));                        // full-fidelity runtime copy
+  assert.ok(fs.existsSync(path.join(port, 'readme.txt')));                     // MV game-root extra
+  assert.ok(fs.existsSync(path.join(port, 'saves/file1.rpgsave')));            // MV game-root save dir
   assert.ok(fs.existsSync(path.join(port, 'www/index.html')));
   assert.ok(fs.existsSync(path.join(port, 'www/img/faces/Actor1.png')));      // renamed
   assert.ok(!fs.existsSync(path.join(port, 'www/img/faces/Actor1.PNG')));

@@ -95,10 +95,10 @@ async function buildPort(opts) {
   const tmp = path.join(outParent, `.tmp-${slugify(dirName)}`);
   fs.rmSync(tmp, { recursive: true, force: true });
   try {
-    // 1) Runtime skeleton.
+    // 1) Runtime — complete, full-fidelity copy. Chromium needs icudtl.dat,
+    // locales/, *.pak, swiftshader/ etc. at run time; nothing may be stripped.
     copyTree(runtimeDir, tmp, {
       cancel,
-      skip: isWinRuntime,
       onFile: ({ files, bytes }) => { if (opts.onProgress) opts.onProgress({ stage: 'runtime', files, bytes }); },
     });
     for (const exe of ['nw', 'crashpad_handler', 'chrome_crashpad_handler']) {
@@ -117,24 +117,44 @@ async function buildPort(opts) {
     }
 
     // 2) Game payload with the case-fix plan applied (renames at copy time).
-    const relPrefix = info.engine === 'MV' ? 'www' : '';
+    // MV walks the whole game root so root-level extras (readme.txt, save
+    // folders, ...) ship too; the plan is payloadRoot-relative, so it applies
+    // only under www/. MZ's payload root IS the game root: plan everywhere.
+    const relPrefix = path.relative(gameDir, info.payloadRoot);   // MV: 'www', MZ: ''
+    const prefixParts = relPrefix.split(path.sep).filter(Boolean);
     const rename = new Map(scan.fixes.map(f => [f.actual.toLowerCase(), f.ref]));
-    for (const entry of walkPayload(info.payloadRoot)) {
+    for (const entry of walkPayload(gameDir)) {
       if (cancel && cancel.cancelled) throw new Error('cancelled by user');
-      const dstRel = rename.get(entry.rel.toLowerCase()) || entry.rel;
-      const dst = path.join(tmp, relPrefix, dstRel);
-      if (entry.isDir) {
-        fs.mkdirSync(dst, { recursive: true });
+      const name = entry.rel.slice(entry.rel.lastIndexOf('/') + 1);
+      if (isWinRuntime(name, entry.isDir)) continue;               // Windows leftovers of the shipped game
+      const parts = entry.rel.split('/');
+      const inPayload = prefixParts.length === 0
+        || parts.slice(0, prefixParts.length).join('/') === relPrefix;
+      if (!inPayload) {
+        // MV extra outside www/: verbatim (root package.json is normalized later).
+        if (!entry.isDir && parts.length === 1 && name === 'package.json') continue;
+        const dst = path.join(tmp, entry.rel);
+        if (entry.isDir) fs.mkdirSync(dst, { recursive: true });
+        else {
+          if (fs.existsSync(dst)) continue;                        // runtime files win at their own level
+          fs.mkdirSync(path.dirname(dst), { recursive: true });
+          fs.copyFileSync(entry.abs, dst);
+          if (opts.onProgress) opts.onProgress({ stage: 'payload', files: 1, bytes: fs.statSync(entry.abs).size });
+        }
         continue;
       }
-      if (isWinRuntime(path.basename(entry.abs), false)) continue;
-      if (relPrefix === '' && entry.rel === 'package.json') continue; // normalized below
-      if (fs.existsSync(dst)) continue;                               // runtime files win at their own level
+      const rel = prefixParts.length ? parts.slice(prefixParts.length).join('/') : entry.rel;
+      if (!rel) continue;                                          // the payloadRoot dir itself (MV www/)
+      const dstRel = rename.get(rel.toLowerCase()) || rel;
+      const dst = path.join(tmp, relPrefix, dstRel);
+      if (entry.isDir) { fs.mkdirSync(dst, { recursive: true }); continue; }
+      if (prefixParts.length === 0 && rel === 'package.json') continue; // normalized below
+      if (fs.existsSync(dst)) continue;                            // runtime files win at their own level
       fs.mkdirSync(path.dirname(dst), { recursive: true });
       fs.copyFileSync(entry.abs, dst);
       if (opts.onProgress) opts.onProgress({ stage: 'payload', files: 1, bytes: fs.statSync(entry.abs).size });
     }
-    if (relPrefix) fs.mkdirSync(path.join(tmp, relPrefix), { recursive: true });
+    if (prefixParts.length) fs.mkdirSync(path.join(tmp, relPrefix), { recursive: true });
 
     // 3) Minority casings → hard-link (fallback copy) beside the canonical file.
     for (const d of scan.duplicates) {
