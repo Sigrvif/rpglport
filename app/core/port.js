@@ -1,0 +1,186 @@
+'use strict';
+// Port builder (spec §8): runtime copy + execstack fix + payload with the
+// case-fix plan applied + package.json normalization + start.sh + NOTES.txt.
+// Output is assembled in a temp dir and renamed into place atomically.
+const fs = require('fs');
+const path = require('path');
+const { clearExecStack } = require('./elf');
+const { destIsCaseInsensitive } = require('./casescan');
+
+const SKIP_EXACT = new Set([
+  'game.exe', 'nw.exe', 'game.bin', 'notification_helper.exe', 'icudtl.dat',
+  'natives_blob.bin', 'snapshot_blob.bin', 'v8_context_snapshot.bin',
+  'credits.html', 'debug.log',
+]);
+const SKIP_DIRS = new Set(['locales', 'swiftshader']);
+
+// Windows-only leftovers of a shipped game have no business in the Linux port.
+function isWinRuntime(name, isDir) {
+  const n = name.toLowerCase();
+  if (isDir) return SKIP_DIRS.has(n);
+  return SKIP_EXACT.has(n) || n.endsWith('.dll') || n.endsWith('.pak');
+}
+
+function slugify(name) {
+  const s = name.normalize('NFKD').replace(/[^\w\s.-]/g, '').trim()
+    .replace(/[\s_.-]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
+  return s || 'rpg-port-game';
+}
+
+function copyTree(src, dst, { onFile, cancel, skip } = {}) {
+  let files = 0, bytes = 0;
+  const stack = [{ s: src, d: dst }];
+  while (stack.length) {
+    if (cancel && cancel.cancelled) throw new Error('cancelled by user');
+    const { s, d } = stack.pop();
+    const st = fs.lstatSync(s);
+    if (st.isDirectory()) {
+      fs.mkdirSync(d, { recursive: true });
+      for (const e of fs.readdirSync(s)) {
+        if (skip && skip(e, true)) continue;
+        stack.push({ s: path.join(s, e), d: path.join(d, e) });
+      }
+    } else {
+      if (skip && skip(path.basename(s), false)) continue;
+      fs.mkdirSync(path.dirname(d), { recursive: true });
+      fs.copyFileSync(s, d);
+      files++;
+      bytes += st.size;
+      if (onFile) onFile({ files, bytes });
+    }
+  }
+  return { files, bytes };
+}
+
+function walkPayload(root) {
+  const out = [];
+  const stack = [''];
+  while (stack.length) {
+    const rel = stack.pop();
+    const abs = rel ? path.join(root, rel) : root;
+    for (const e of fs.readdirSync(abs, { withFileTypes: true })) {
+      const childRel = rel ? `${rel}/${e.name}` : e.name;
+      out.push({ rel: childRel, abs: path.join(abs, e.name), isDir: e.isDirectory() });
+      if (e.isDirectory()) stack.push(childRel);
+    }
+  }
+  return out;
+}
+
+async function buildPort(opts) {
+  const { gameDir, info, scan, runtimeDir, outParent, dirName } = opts;
+  const onExists = opts.onExists || 'refuse';
+  const cancel = opts.cancel;
+  const notes = [], warnings = [];
+
+  fs.mkdirSync(outParent, { recursive: true });
+  const ci = destIsCaseInsensitive(outParent);
+  if (ci) warnings.push('destination filesystem is case-INSENSITIVE: case fixes become no-ops there');
+
+  if (ci && scan.conflicts.length) {
+    throw new Error('case-only-distinct asset files cannot be represented on a case-insensitive destination; resolve the conflicts or pick another output location');
+  }
+
+  let finalDir = path.join(outParent, dirName);
+  if (fs.existsSync(finalDir)) {
+    if (onExists === 'refuse') throw new Error(`output exists: ${finalDir}`);
+    if (onExists === 'overwrite') fs.rmSync(finalDir, { recursive: true, force: true });
+    else {
+      let n = 2;
+      while (fs.existsSync(`${finalDir}-${n}`)) n++;
+      finalDir = `${finalDir}-${n}`;
+    }
+  }
+
+  const tmp = path.join(outParent, `.tmp-${slugify(dirName)}`);
+  fs.rmSync(tmp, { recursive: true, force: true });
+  try {
+    // 1) Runtime skeleton.
+    copyTree(runtimeDir, tmp, {
+      cancel,
+      skip: isWinRuntime,
+      onFile: ({ files, bytes }) => { if (opts.onProgress) opts.onProgress({ stage: 'runtime', files, bytes }); },
+    });
+    for (const exe of ['nw', 'crashpad_handler', 'chrome_crashpad_handler']) {
+      if (fs.existsSync(path.join(tmp, exe))) fs.chmodSync(path.join(tmp, exe), 0o755);
+    }
+    const soDirs = [path.join(tmp, 'lib'), tmp];
+    for (const dir of soDirs) {
+      let entries;
+      try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+      for (const e of entries) {
+        if (e.isFile() && e.name.toLowerCase().endsWith('.so')) {
+          const f = path.join(dir, e.name);
+          if (clearExecStack(f)) notes.push(`cleared executable stack flag: ${path.relative(tmp, f)}`);
+        }
+      }
+    }
+
+    // 2) Game payload with the case-fix plan applied (renames at copy time).
+    const relPrefix = info.engine === 'MV' ? 'www' : '';
+    const rename = new Map(scan.fixes.map(f => [f.actual.toLowerCase(), f.ref]));
+    for (const entry of walkPayload(info.payloadRoot)) {
+      if (cancel && cancel.cancelled) throw new Error('cancelled by user');
+      const dstRel = rename.get(entry.rel.toLowerCase()) || entry.rel;
+      const dst = path.join(tmp, relPrefix, dstRel);
+      if (entry.isDir) {
+        fs.mkdirSync(dst, { recursive: true });
+        continue;
+      }
+      if (isWinRuntime(path.basename(entry.abs), false)) continue;
+      if (relPrefix === '' && entry.rel === 'package.json') continue; // normalized below
+      if (fs.existsSync(dst)) continue;                               // runtime files win at their own level
+      fs.mkdirSync(path.dirname(dst), { recursive: true });
+      fs.copyFileSync(entry.abs, dst);
+      if (opts.onProgress) opts.onProgress({ stage: 'payload', files: 1, bytes: fs.statSync(entry.abs).size });
+    }
+    if (relPrefix) fs.mkdirSync(path.join(tmp, relPrefix), { recursive: true });
+
+    // 3) Minority casings → hard-link (fallback copy) beside the canonical file.
+    for (const d of scan.duplicates) {
+      if (ci) { warnings.push(`case-insensitive destination: skipped duplicate ${d.as}`); continue; }
+      const target = path.join(tmp, relPrefix, d.target);
+      const as = path.join(tmp, relPrefix, d.as);
+      fs.mkdirSync(path.dirname(as), { recursive: true });
+      try { fs.linkSync(target, as); } catch { fs.copyFileSync(target, as); }
+      notes.push(`materialized duplicate casing: ${d.as}`);
+    }
+
+    // 4) Normalized package.json.
+    let pkg = null;
+    try { pkg = JSON.parse(fs.readFileSync(path.join(gameDir, 'package.json'), 'utf8')); }
+    catch { notes.push('synthesized package.json (missing or malformed)'); }
+    pkg = pkg || {};
+    const baseName = dirName.replace(/\s*\(Linux\)\s*$/, '');
+    const out = {
+      name: slugify(baseName),
+      main: pkg.main || (info.engine === 'MV' ? 'www/index.html' : 'index.html'),
+      window: pkg.window || {},
+    };
+    if (pkg['js-flags']) out['js-flags'] = pkg['js-flags'];
+    if (pkg['chromium-args']) out['chromium-args'] = pkg['chromium-args'];
+    fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify(out, null, 2));
+
+    // 5) Launcher + notes.
+    fs.writeFileSync(path.join(tmp, 'start.sh'), '#!/bin/sh\ncd "$(dirname "$0")"\nexec ./nw "$@"\n');
+    fs.chmodSync(path.join(tmp, 'start.sh'), 0o755);
+    const lines = [
+      'RPGPort — generated Linux port',
+      `runtime: ${path.basename(runtimeDir)}`,
+      ...notes.map(n => `note: ${n}`),
+      ...warnings.map(w => `warning: ${w}`),
+      ...scan.fixes.map(f => `case fix: ${f.actual} -> ${f.ref}`),
+      ...scan.duplicates.map(d => `case duplicate: ${d.as} (from ${d.target})`),
+      ...scan.missing.map(m => `missing asset: ${m}`),
+    ];
+    fs.writeFileSync(path.join(tmp, 'NOTES.txt'), `${lines.join('\n')}\n`);
+
+    fs.renameSync(tmp, finalDir);
+    return { finalDir, notes, warnings };
+  } catch (e) {
+    fs.rmSync(tmp, { recursive: true, force: true });
+    throw e;
+  }
+}
+
+module.exports = { buildPort, slugify, isWinRuntime, SKIP_EXACT };
