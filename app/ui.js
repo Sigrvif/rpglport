@@ -3,7 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const { shell } = require('nw.gui');
-const { analyzeInput, portCard, PortQueue, selftest } = require('./core/engine');
+const { analyzeInput, portCard, PortQueue, selftest, findLiveDisplays, hasXvfbRun } = require('./core/engine');
 const { listPool, choose } = require('./core/select');
 const settings = require('./core/settings');
 
@@ -238,20 +238,42 @@ function existsPrompt(outDir) {
 }
 
 const { spawn } = require('child_process');
-function doTestRun(card) {
+
+// Test Run ladder: (1) inherited DISPLAY; (2) each live X socket in
+// /tmp/.X11-unix (the tool may carry a stale DISPLAY from where it was
+// launched, while the user's session has a working one); (3) headless
+// xvfb-run when nothing else exists. Only then: error with guidance.
+function doTestRun(card, forcedDisplay, viaXvfb) {
   if (!card.finalDir) return;
   setStatus(card, 'test run…');
   let fatal = '';
-  const p = spawn(path.join(card.finalDir, 'nw'), ['--no-sandbox'], { cwd: card.finalDir, stdio: ['ignore', 'ignore', 'pipe'] });
+  const env = { ...process.env };
+  let cmd = path.join(card.finalDir, 'nw');
+  let args = ['--no-sandbox'];
+  if (viaXvfb) { cmd = 'xvfb-run'; args = ['-a', path.join(card.finalDir, 'nw'), '--no-sandbox']; }
+  else if (forcedDisplay) env.DISPLAY = forcedDisplay;
+  const p = spawn(cmd, args, { cwd: card.finalDir, stdio: ['ignore', 'ignore', 'pipe'], env });
   p.on('error', e => { setStatus(card, `test run failed: ${e.message}`, 'error'); });
   p.stderr.on('data', c => { fatal += c; });
-  const t = setTimeout(() => { p.kill('SIGTERM'); setStatus(card, 'launched OK (no early crash)', 'done'); }, 8000);
+  const t = setTimeout(() => { p.kill('SIGTERM'); setStatus(card, viaXvfb ? 'launched OK headless (Xvfb — no window shown)' : 'launched OK (no early crash)', 'done'); }, 8000);
   p.on('close', (code) => {
     clearTimeout(t);
     if (code !== 0 && code !== null && !/SIGTERM/.test(fatal)) {
-      if (/cannot open display/i.test(fatal)) {
-        setStatus(card, `no working display (DISPLAY=${process.env.DISPLAY || 'unset'}) — run from a desktop session, or under Xvfb on headless machines`, 'error');
-        appendLog(card.id, `test-run exit ${code}: ${fatal.slice(-500)}`);
+      if (/cannot open display/i.test(fatal) && !card._displayTried) {
+        card._displayTried = true;
+        (async () => {
+          const alts = (await findLiveDisplays()).filter(d => d !== (process.env.DISPLAY || ''));
+          if (alts.length) {
+            appendLog(card.id, `display ${process.env.DISPLAY || '(unset)'} unreachable — retrying on ${alts[0]}`);
+            doTestRun(card, alts[0]);
+          } else if (hasXvfbRun()) {
+            appendLog(card.id, `no reachable X display — retrying headless under xvfb-run`);
+            doTestRun(card, null, true);
+          } else {
+            setStatus(card, `no working display (DISPLAY=${process.env.DISPLAY || 'unset'}) — restart RPGLPort from the session where start.sh works, or install Xvfb on headless machines`, 'error');
+            appendLog(card.id, `test-run exit ${code}: ${fatal.slice(-500)}`);
+          }
+        })();
         return;
       }
       const line = (fatal.match(/FATAL:[^\n]*|Check failed[^\n]*/) || [])[0] || `exit ${code}`;

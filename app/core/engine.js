@@ -1,6 +1,7 @@
 'use strict';
 // Pipeline orchestration: input → game cards; serialized port queue; selftest.
 const fs = require('fs');
+const net = require('net');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
@@ -13,6 +14,40 @@ const { buildPort } = require('./port');
 
 const TMP = () => path.join(os.homedir(), '.cache', 'rpglport', 'tmp');
 let cardSeq = 0;
+
+// Live X displays, most-recently-used first. A socket FILE in /tmp/.X11-unix
+// can outlive its server, so each candidate is connect-probed. Used by the
+// GUI's Test Run to recover when the tool itself was launched with a stale
+// DISPLAY (its children inherit it, not the user's shell).
+function socketAlive(socketPath, timeoutMs = 300) {
+  return new Promise((resolve) => {
+    const s = net.connect({ path: socketPath });
+    const done = (ok) => { s.destroy(); resolve(ok); };
+    s.setTimeout(timeoutMs, () => done(false));
+    s.on('connect', () => done(true));
+    s.on('error', () => done(false));
+  });
+}
+
+async function findLiveDisplays(dir = '/tmp/.X11-unix') {
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return []; }
+  const out = [];
+  for (const n of names) {
+    const m = n.match(/^X(\d+)$/);
+    if (!m) continue;
+    if (await socketAlive(path.join(dir, n))) out.push(`:${m[1]}`);
+  }
+  // :0 first — the primary display of a normal desktop session
+  return out.sort((a, b) => Number(a.slice(1)) - Number(b.slice(1)));
+}
+
+function hasXvfbRun() {
+  for (const d of (process.env.PATH || '').split(':')) {
+    if (d && fs.existsSync(path.join(d, 'xvfb-run'))) return true;
+  }
+  return false;
+}
 
 function analyzeCard(gameDir, source, extra = {}) {
   return { id: `c${++cardSeq}`, name: path.basename(gameDir), gameDir, info: analyze(gameDir), source, warnings: [], ...extra };
@@ -148,4 +183,4 @@ async function selftest(bundleRoot) {
   return { ok: checks.every(c => c.ok), checks };
 }
 
-module.exports = { analyzeInput, portCard, PortQueue, selftest, TMP };
+module.exports = { analyzeInput, portCard, PortQueue, selftest, TMP, findLiveDisplays, hasXvfbRun };

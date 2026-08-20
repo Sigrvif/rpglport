@@ -47,6 +47,22 @@ test('PortQueue: a failed job does not poison the chain', async () => {
   assert.equal(await good.promise, 'ok');
 });
 
+test('findLiveDisplays: connect-probes sockets, dead files ignored, :0 first', async () => {
+  const net = require('net');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'xdis-'));
+  const srv = net.createServer(() => {});
+  await new Promise(r => srv.listen(path.join(dir, 'X7'), r));
+  fs.writeFileSync(path.join(dir, 'X3'), '');                       // dead socket file
+  fs.writeFileSync(path.join(dir, 'notasocket'), '');
+  try {
+    const found = await (require('../app/core/engine')).findLiveDisplays(dir);
+    assert.deepEqual(found, [':7']);                                // only the connectable one
+    const none = await (require('../app/core/engine')).findLiveDisplays(path.join(dir, 'missing'));
+    assert.deepEqual(none, []);
+    assert.equal(typeof (require('../app/core/engine')).hasXvfbRun(), 'boolean');
+  } finally { srv.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('selftest passes on dev layout', { skip: !fs.existsSync(SZ) }, async () => {
   const r = await selftest(process.cwd());
   assert.equal(r.ok, true, JSON.stringify(r.checks.filter(c => !c.ok)));
