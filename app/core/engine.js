@@ -107,6 +107,39 @@ function xauthorityCandidates() {
   return out;
 }
 
+// Whole working environments observed in this user's processes. When the
+// correct DISPLAY+XAUTHORITY pair alone is rejected, the tool's own inherited
+// environment is poisoned for X (stale WAYLAND_DISPLAY, GDK_BACKEND forced,
+// dead XDG_RUNTIME_DIR…) — and a pair-based retry keeps carrying that poison.
+// A session process (terminal, file manager) holds the COMPLETE environment
+// under which launching the game verifiably works; adopting it wholesale
+// replicates that. Same-uid, live displays only, deduped, session-y first.
+function findSessionEnvs(procDir = '/proc', liveDisplays = null, cap = 6) {
+  const uid = process.getuid();
+  let entries;
+  try { entries = fs.readdirSync(procDir, { withFileTypes: true }); } catch { return []; }
+  const out = [];
+  const seen = new Set();
+  for (const e of entries) {
+    if (!e.isDirectory() || !/^\d+$/.test(e.name)) continue;
+    const d = path.join(procDir, e.name);
+    try { if (fs.statSync(d).uid !== uid) continue; } catch { continue; }
+    const env = readEnviron(d);
+    if (!env || !env.DISPLAY || !/^:\d+(\.\d+)?$/.test(env.DISPLAY)) continue;
+    const display = env.DISPLAY.replace(/\.\d+$/, '');
+    if (liveDisplays && !liveDisplays.has(display)) continue;
+    const key = [display, env.XAUTHORITY || '', env.WAYLAND_DISPLAY || '', env.XDG_RUNTIME_DIR || ''].join('|');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    let comm = '';
+    try { comm = fs.readFileSync(path.join(d, 'comm'), 'utf8').trim(); } catch { /* gone */ }
+    out.push({ pid: Number(e.name), comm, display, env });
+  }
+  const sessioniness = (x) => (x.env.WAYLAND_DISPLAY ? 2 : 0) + (x.env.XAUTHORITY ? 1 : 0);
+  out.sort((a, b) => sessioniness(b) - sessioniness(a) || b.pid - a.pid);
+  return out.slice(0, cap);
+}
+
 function analyzeCard(gameDir, source, extra = {}) {
   return { id: `c${++cardSeq}`, name: path.basename(gameDir), gameDir, info: analyze(gameDir), source, warnings: [], ...extra };
 }
@@ -241,4 +274,4 @@ async function selftest(bundleRoot) {
   return { ok: checks.every(c => c.ok), checks };
 }
 
-module.exports = { analyzeInput, portCard, PortQueue, selftest, TMP, findLiveDisplays, hasXvfbRun, findProcDisplayPairs, xauthorityCandidates };
+module.exports = { analyzeInput, portCard, PortQueue, selftest, TMP, findLiveDisplays, hasXvfbRun, findProcDisplayPairs, xauthorityCandidates, findSessionEnvs };

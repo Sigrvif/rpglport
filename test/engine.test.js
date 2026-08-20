@@ -92,6 +92,34 @@ test('findProcDisplayPairs: parses environ, ALL distinct pairs kept, screen suff
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('findSessionEnvs: live-display filter, env dedup, session-y ordering, PATH-less tolerated', () => {
+  const { findSessionEnvs } = require('../app/core/engine');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'proc-'));
+  const mk = (pid, kvs, comm) => {
+    fs.mkdirSync(path.join(dir, pid));
+    fs.writeFileSync(path.join(dir, pid, 'environ'), kvs.map(kv => kv + '\0').join(''));
+    if (comm) fs.writeFileSync(path.join(dir, pid, 'comm'), comm + '\n');
+  };
+  // terminal: full wayland session env — most session-y
+  mk('100', ['DISPLAY=:1', 'XAUTHORITY=/run/user/1000/xauth_A', 'WAYLAND_DISPLAY=wayland-0', 'XDG_RUNTIME_DIR=/run/user/1000'], 'konsole');
+  // exact env dup (different pid) → deduped
+  mk('150', ['DISPLAY=:1', 'XAUTHORITY=/run/user/1000/xauth_A', 'WAYLAND_DISPLAY=wayland-0', 'XDG_RUNTIME_DIR=/run/user/1000'], 'yakuake');
+  // X-only process → kept, sorts after wayland-aware
+  mk('200', ['DISPLAY=:1', 'XAUTHORITY=/run/user/1000/xauth_B'], 'xterm');
+  // display not in live set → filtered
+  mk('300', ['DISPLAY=:9', 'XAUTHORITY=/x'], 'weird');
+  // no DISPLAY → filtered
+  mk('400', ['FOO=1'], 'cron');
+  try {
+    const envs = findSessionEnvs(dir, new Set([':1']));
+    assert.equal(envs.length, 2);
+    assert.deepEqual([envs[0].comm, envs[0].display, envs[0].env.WAYLAND_DISPLAY], ['konsole', ':1', 'wayland-0']);
+    assert.deepEqual([envs[1].comm, envs[1].env.XAUTHORITY], ['xterm', '/run/user/1000/xauth_B']);
+    assert.deepEqual(findSessionEnvs(dir, new Set()), []);      // no live displays → nothing
+    assert.deepEqual(findSessionEnvs(path.join(dir, 'missing'), new Set([':1'])), []);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('selftest passes on dev layout', { skip: !fs.existsSync(SZ) }, async () => {
   const r = await selftest(process.cwd());
   assert.equal(r.ok, true, JSON.stringify(r.checks.filter(c => !c.ok)));

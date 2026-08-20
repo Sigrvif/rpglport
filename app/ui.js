@@ -3,7 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const { shell } = require('nw.gui');
-const { analyzeInput, portCard, PortQueue, selftest, findLiveDisplays, hasXvfbRun, findProcDisplayPairs, xauthorityCandidates } = require('./core/engine');
+const { analyzeInput, portCard, PortQueue, selftest, findLiveDisplays, hasXvfbRun, findProcDisplayPairs, xauthorityCandidates, findSessionEnvs } = require('./core/engine');
 const { listPool, choose } = require('./core/select');
 const settings = require('./core/settings');
 
@@ -245,9 +245,9 @@ const { spawn } = require('child_process');
 // from this user's running processes (the session where start.sh works has
 // them), then plain sockets with various authority guesses, then headless
 // xvfb-run. Only then: error with guidance.
-function testAttempt(card, { display, xauthority, viaXvfb }) {
+function testAttempt(card, { display, xauthority, viaXvfb, env: baseEnv }) {
   return new Promise((resolve) => {
-    const env = { ...process.env };
+    const env = baseEnv ? { ...baseEnv } : { ...process.env };
     let cmd = path.join(card.finalDir, 'nw');
     let args = ['--no-sandbox'];
     if (viaXvfb) {
@@ -256,7 +256,6 @@ function testAttempt(card, { display, xauthority, viaXvfb }) {
     } else {
       if (display) env.DISPLAY = display;
       if (xauthority) env.XAUTHORITY = xauthority;
-      else delete env.XAUTHORITY;
     }
     let fatal = '';
     const p = spawn(cmd, args, { cwd: card.finalDir, stdio: ['ignore', 'ignore', 'pipe'], env });
@@ -272,9 +271,13 @@ function testAttempt(card, { display, xauthority, viaXvfb }) {
   });
 }
 
+const envSummary = (env) =>
+  `DISPLAY=${env.DISPLAY || '(unset)'} XAUTHORITY=${env.XAUTHORITY ? 'set' : 'unset'} WAYLAND_DISPLAY=${env.WAYLAND_DISPLAY || '(unset)'} XDG_RUNTIME_DIR=${env.XDG_RUNTIME_DIR || '(unset)'} GDK_BACKEND=${env.GDK_BACKEND || '(unset)'}`;
+
 async function doTestRun(card) {
   if (!card.finalDir) return;
   setStatus(card, 'test run…');
+  appendLog(card.id, `tool environment: ${envSummary(process.env)}`);
   // attempt 0: the tool's own environment, unchanged (right on normal desktops)
   let r = await testAttempt(card, {});
   if (r.kind === 'ok') return setStatus(card, 'launched OK (no early crash)', 'done');
@@ -285,12 +288,35 @@ async function doTestRun(card) {
     appendLog(card.id, `test-run exit ${r.code}: ${r.fatal.slice(-500)}`);
     return;
   }
-  // no-display: build candidate list and work through it.
-  // Authority guesses per live display: every pair seen in this user's
-  // processes (a stale one must not shadow the session's live one), the
-  // tool's inherited authority, display-manager standard files, and no
-  // authority (servers allowing localuser connections).
+  // no-display. The pair-based retries below carry the tool's inherited env —
+  // which may itself be poisoned for X (a correct DISPLAY+XAUTHORITY can still
+  // be rejected when e.g. GDK_BACKEND/WAYLAND_DISPLAY/XDG_RUNTIME_DIR are
+  // stale). So FIRST adopt whole working environments from session processes
+  // (the shell where start.sh works holds one), then fall back to pairs.
   const live = new Set(await findLiveDisplays());
+  const sessions = findSessionEnvs('/proc', live);
+  appendLog(card.id, `display ${process.env.DISPLAY || '(unset)'} unreachable — ${sessions.length} session env(s), then pair candidates`);
+  for (const s of sessions) {
+    const env = { ...s.env };
+    if (!env.PATH) env.PATH = process.env.PATH;
+    appendLog(card.id, `adopting env of ${s.comm || 'process'} (pid ${s.pid}): ${envSummary(env)}`);
+    r = await testAttempt(card, { env });
+    if (r.kind === 'ok') {
+      setStatus(card, `launched OK — adopted environment of ${s.comm || 'session'} (pid ${s.pid})`, 'done');
+      appendLog(card.id, `booted with adopted env: ${envSummary(env)}`);
+      return;
+    }
+    if (r.kind === 'crashed') {
+      const line = (r.fatal.match(/FATAL:[^\n]*|Check failed[^\n]*/) || [])[0] || `exit ${r.code}`;
+      setStatus(card, `crashed: ${line}`, 'error');
+      appendLog(card.id, `test-run exit ${r.code}: ${r.fatal.slice(-500)}`);
+      return;
+    }
+    if (r.kind === 'error') return setStatus(card, `test run failed: ${r.msg}`, 'error');
+    const xlib = (r.fatal.match(/Xlib:[^\n]*/) || [])[0] || 'cannot open display';
+    appendLog(card.id, `adopted env rejected: ${xlib.trim()}`);
+  }
+  // pair-based fallback (environments without /proc-visible session processes)
   const auths = new Set();
   for (const p of findProcDisplayPairs()) if (p.xauthority) auths.add(p.xauthority);
   if (process.env.XAUTHORITY) auths.add(process.env.XAUTHORITY);
@@ -306,7 +332,6 @@ async function doTestRun(card) {
     for (const a of auths) push(d, a);
     push(d, null);
   }
-  appendLog(card.id, `display ${process.env.DISPLAY || '(unset)'} unreachable — trying ${candidates.length} candidate(s): ${candidates.map(c => `${c.display}${c.xauthority ? '+auth' : ''}`).join(', ') || 'none'}`);
   for (const c of candidates) {
     r = await testAttempt(card, c);
     if (r.kind === 'ok') {
@@ -321,8 +346,6 @@ async function doTestRun(card) {
       return;
     }
     if (r.kind === 'error') return setStatus(card, `test run failed: ${r.msg}`, 'error');
-    // no-display on this candidate: record WHY (Xlib prints the real reason
-    // before GTK's generic "cannot open display" — Invalid cookie, etc.)
     const xlib = (r.fatal.match(/Xlib:[^\n]*/) || [])[0] || 'cannot open display';
     appendLog(card.id, `candidate ${c.display}${c.xauthority ? ` (${c.xauthority})` : ' (no authority)'} rejected: ${xlib.trim()}`);
   }
