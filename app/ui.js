@@ -3,7 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const { shell } = require('nw.gui');
-const { analyzeInput, portCard, PortQueue, selftest, findLiveDisplays, hasXvfbRun, findProcDisplayPairs } = require('./core/engine');
+const { analyzeInput, portCard, PortQueue, selftest, findLiveDisplays, hasXvfbRun, findProcDisplayPairs, xauthorityCandidates } = require('./core/engine');
 const { listPool, choose } = require('./core/select');
 const settings = require('./core/settings');
 
@@ -285,8 +285,16 @@ async function doTestRun(card) {
     appendLog(card.id, `test-run exit ${r.code}: ${r.fatal.slice(-500)}`);
     return;
   }
-  // no-display: build candidate list and work through it
+  // no-display: build candidate list and work through it.
+  // Authority guesses per live display: every pair seen in this user's
+  // processes (a stale one must not shadow the session's live one), the
+  // tool's inherited authority, display-manager standard files, and no
+  // authority (servers allowing localuser connections).
   const live = new Set(await findLiveDisplays());
+  const auths = new Set();
+  for (const p of findProcDisplayPairs()) if (p.xauthority) auths.add(p.xauthority);
+  if (process.env.XAUTHORITY) auths.add(process.env.XAUTHORITY);
+  for (const a of xauthorityCandidates()) auths.add(a);
   const candidates = [];
   const seen = new Set();
   const push = (display, xauthority) => {
@@ -294,7 +302,10 @@ async function doTestRun(card) {
     if (!seen.has(key)) { seen.add(key); candidates.push({ display, xauthority }); }
   };
   for (const p of findProcDisplayPairs().filter(p => live.has(p.display))) push(p.display, p.xauthority);
-  for (const d of live) { push(d, process.env.XAUTHORITY); push(d, null); }
+  for (const d of live) {
+    for (const a of auths) push(d, a);
+    push(d, null);
+  }
   appendLog(card.id, `display ${process.env.DISPLAY || '(unset)'} unreachable — trying ${candidates.length} candidate(s): ${candidates.map(c => `${c.display}${c.xauthority ? '+auth' : ''}`).join(', ') || 'none'}`);
   for (const c of candidates) {
     r = await testAttempt(card, c);
@@ -310,6 +321,10 @@ async function doTestRun(card) {
       return;
     }
     if (r.kind === 'error') return setStatus(card, `test run failed: ${r.msg}`, 'error');
+    // no-display on this candidate: record WHY (Xlib prints the real reason
+    // before GTK's generic "cannot open display" — Invalid cookie, etc.)
+    const xlib = (r.fatal.match(/Xlib:[^\n]*/) || [])[0] || 'cannot open display';
+    appendLog(card.id, `candidate ${c.display}${c.xauthority ? ` (${c.xauthority})` : ' (no authority)'} rejected: ${xlib.trim()}`);
   }
   if (hasXvfbRun()) {
     appendLog(card.id, 'no usable local display — retrying headless under xvfb-run');

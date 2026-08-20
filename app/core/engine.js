@@ -68,7 +68,10 @@ function readEnviron(pidDir) {
 
 function findProcDisplayPairs(procDir = '/proc') {
   const uid = process.getuid();
-  const pairs = new Map(); // display -> xauthority | null (first seen wins)
+  const seen = new Set(); // display|auth — ALL distinct pairs: a display can be
+  // seen first with a STALE authority in one process while the session's live
+  // one sits in another, so first-wins would hide the working pair.
+  const out = [];
   let entries;
   try { entries = fs.readdirSync(procDir, { withFileTypes: true }); } catch { return []; }
   for (const e of entries) {
@@ -78,9 +81,30 @@ function findProcDisplayPairs(procDir = '/proc') {
     const env = readEnviron(d);
     if (!env || !env.DISPLAY || !/^:\d+(\.\d+)?$/.test(env.DISPLAY)) continue;
     const display = env.DISPLAY.replace(/\.\d+$/, '');  // :0.0 → :0
-    if (!pairs.has(display)) pairs.set(display, env.XAUTHORITY || null);
+    const key = `${display}|${env.XAUTHORITY || ''}`;
+    if (!seen.has(key)) { seen.add(key); out.push({ display, xauthority: env.XAUTHORITY || null }); }
   }
-  return [...pairs.entries()].map(([display, xauthority]) => ({ display, xauthority }));
+  return out;
+}
+
+// Standard Xauthority locations used by display managers, for when no running
+// process exposes the session's current authority via /proc.
+function xauthorityCandidates() {
+  const out = [];
+  const uid = process.getuid();
+  const home = os.homedir();
+  const paths = [
+    path.join(home, '.Xauthority'),                       // classic / KDE / SDDM
+    `/run/user/${uid}/gdm/Xauthority`,                    // GDM X11 sessions
+  ];
+  for (const p of paths) if (fs.existsSync(p)) out.push(p);
+  try { // mutter/XWayland per-boot authorities (random suffix)
+    const runDir = `/run/user/${uid}`;
+    for (const e of fs.readdirSync(runDir)) {
+      if (e.startsWith('.mutter-Xwaylandauth.')) out.push(path.join(runDir, e));
+    }
+  } catch { /* no /run/user */ }
+  return out;
 }
 
 function analyzeCard(gameDir, source, extra = {}) {
@@ -217,4 +241,4 @@ async function selftest(bundleRoot) {
   return { ok: checks.every(c => c.ok), checks };
 }
 
-module.exports = { analyzeInput, portCard, PortQueue, selftest, TMP, findLiveDisplays, hasXvfbRun, findProcDisplayPairs };
+module.exports = { analyzeInput, portCard, PortQueue, selftest, TMP, findLiveDisplays, hasXvfbRun, findProcDisplayPairs, xauthorityCandidates };
