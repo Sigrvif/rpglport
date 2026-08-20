@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { clearExecStack } = require('./elf');
 const { destIsCaseInsensitive } = require('./casescan');
+const { cmpVer } = require('./detect');
 
 const SKIP_EXACT = new Set([
   'game.exe', 'nw.exe', 'game.bin', 'notification_helper.exe', 'icudtl.dat',
@@ -20,6 +21,29 @@ function isWinRuntime(name, isDir) {
   if (isDir) return SKIP_DIRS.has(n);
   return SKIP_EXACT.has(n) || n.endsWith('.dll') || n.endsWith('.pak');
 }
+
+// Pre-0.30 NW.js bundles an ancient fontconfig that cannot parse modern
+// system configs (new constants, xsi:nil) nor `~`/prefix= cache paths, and
+// aborts in InitDefaultFont(); those runtimes get a minimal fonts.conf with
+// an absolute writable cachedir, pinned via FONTCONFIG_FILE (spec §6).
+const FONTCONFIG_CONF = `<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <dir>/usr/share/fonts</dir>
+  <dir>~/.local/share/fonts</dir>
+  <cachedir>/tmp/rpgport-fontcache</cachedir>
+  <alias><family>sans-serif</family><prefer>
+    <family>DejaVu Sans</family><family>Noto Sans</family><family>Noto Sans CJK JP</family>
+  </prefer></alias>
+  <alias><family>serif</family><prefer>
+    <family>DejaVu Serif</family><family>Noto Serif</family><family>Noto Serif CJK JP</family>
+  </prefer></alias>
+  <alias><family>monospace</family><prefer>
+    <family>DejaVu Sans Mono</family><family>Noto Sans Mono</family><family>Noto Sans Mono CJK JP</family>
+  </prefer></alias>
+</fontconfig>
+`;
+const NW_WRAPPER = '#!/bin/sh\nd="$(dirname -- "$0")"\nexport FONTCONFIG_FILE="${FONTCONFIG_FILE:-$d/fonts.conf}"\nexec "$d/nw.bin" "$@"\n';
 
 function slugify(name) {
   const s = name.normalize('NFKD').replace(/[^\w\s.-]/g, '').trim()
@@ -115,6 +139,18 @@ async function buildPort(opts) {
           if (clearExecStack(f)) notes.push(`cleared executable stack flag: ${path.relative(tmp, f)}`);
         }
       }
+    }
+
+    // 1b) Fontconfig workaround for old runtimes: real binary becomes nw.bin,
+    // nw becomes a wrapper exporting FONTCONFIG_FILE. Every entry point
+    // (start.sh, Test Run, direct ./nw) goes through the wrapper.
+    const mVer = path.basename(runtimeDir).match(/nwjs-v(\d+\.\d+\.\d+)/);
+    if (mVer && cmpVer(mVer[1], '0.30.0') < 0 && fs.existsSync(path.join(tmp, 'nw'))) {
+      fs.writeFileSync(path.join(tmp, 'fonts.conf'), FONTCONFIG_CONF);
+      fs.renameSync(path.join(tmp, 'nw'), path.join(tmp, 'nw.bin'));
+      fs.writeFileSync(path.join(tmp, 'nw'), NW_WRAPPER);
+      fs.chmodSync(path.join(tmp, 'nw'), 0o755);
+      notes.push(`fontconfig workaround: old runtime ${mVer[1]} cannot parse modern fontconfig; nw wrapper pins FONTCONFIG_FILE to the bundled fonts.conf`);
     }
 
     // 2) Game payload with the case-fix plan applied (renames at copy time).
