@@ -158,7 +158,6 @@ function renderCard(card) {
   el.querySelector('.bLog').onclick = () => { card.logEl.classList.toggle('open'); card.logEl.textContent = card.logs.join('\n'); };
   el.querySelector('.bRemove').onclick = () => {
     if (card.jobToken) card.jobToken.cancelled = true;   // queued job dropped; in-flight stops at file boundary
-    if (card.cancel) card.cancel.cancelled = true;
     state.cards.delete(card.id); el.remove();
   };
   el.querySelector('.bPort').onclick = () => doPort(card);   // doPort does its own queue.enqueue — wrapping it in enqueue deadlocks
@@ -174,18 +173,19 @@ async function addInputs(paths) {
 }
 
 async function doPort(card) {
+  if (card.porting) return;                              // re-entry guard: port/test in flight or prompt open
+  card.porting = true;
   const runtime = card.chosen || card.autoPick;
-  if (!runtime) return toast('no runtime available — check the pool', 'err');
+  if (!runtime) { card.porting = false; return toast('no runtime available — check the pool', 'err'); }
   const s = state.settings;
   const dirName = `${card.name} (Linux)`;
   // Spec §8: output-exists prompt — refuse (default) / overwrite / new name.
   const outDir = path.join(s.outDir, dirName);
   if (fs.existsSync(outDir)) {
     const choice = await existsPrompt(outDir);
-    if (choice === 'refuse') { setStatus(card, 'ready (kept existing output)'); return; }
+    if (choice === 'refuse') { card.porting = false; setStatus(card, 'ready (kept existing output)'); return; }
     card.onExists = choice;
   }
-  card.cancel = { cancelled: false };
   card.progEl.hidden = false;
   setStatus(card, 'porting…');
   const job = queue.enqueue((token) => portCard(card, {
@@ -216,6 +216,8 @@ async function doPort(card) {
     card.progEl.hidden = true;
     setStatus(card, `error: ${e.message}`, 'error');
     appendLog(card.id, `ERROR ${e.stack || e.message}`);
+  } finally {
+    card.porting = false;
   }
 }
 
@@ -226,7 +228,10 @@ function existsPrompt(outDir) {
       <div class="row"><button data-a="refuse">Keep existing (cancel)</button>
       <button data-a="overwrite">Overwrite</button><button data-a="newname">New name</button></div>`;
     dlg.querySelector('code').textContent = outDir;
-    dlg.onclick = (e) => { const a = e.target.dataset && e.target.dataset.a; if (a) { dlg.close(); resolve(a); } };
+    let settled = false;
+    const finish = (a) => { if (settled) return; settled = true; dlg.remove(); resolve(a); };
+    dlg.onclick = (e) => { const a = e.target.dataset && e.target.dataset.a; if (a) finish(a); };
+    dlg.oncancel = () => finish('refuse');                // Esc → same as "keep existing"
     document.body.appendChild(dlg);
     dlg.showModal();
   });
