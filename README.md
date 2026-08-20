@@ -64,7 +64,7 @@ listing the whole pool; overrides bypass policy but not the MZ floor.
 
 ## Limitations
 
-- EnigmaVB exes > 2 GiB are refused (the unpacker loads the PE into RAM).
+- EnigmaVB exes > 4 GiB are refused (PE 32-bit offsets can't address them); exes larger than ~75% of free RAM are refused with a size report (the unpacker memory-loads the PE; Node's own 2 GiB `readFileSync` cap is bypassed via chunked reads, so 2–4 GiB exes work when RAM allows).
 - Registry virtualization data is not extracted.
 - NW.js ships no H.264/AAC decoders — games whose videos/audio are `.m4a`-only will
   be silent. (MV/MZ default audio is fine.)

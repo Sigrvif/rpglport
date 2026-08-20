@@ -176,7 +176,7 @@ one-line rationale per entry. Overrides bypass policy but not the MZ floor.
 | Mixed runtime binaries | Shown as evidence; browser-process stamp wins |
 | Missing `package.json` | Synthesized for the detected layout |
 | `app.nw` compiled MV | Unzipped, re-analyzed |
-| **EnigmaVB-packed exe** (huge `Game.exe`, no game dir beside it, `.enigma1` section) | Auto-unpacked in-process via vendored module (`--no-exe` equivalent: file tree only, no Windows stub rebuild); then normal pipeline. Card shows EnigmaVB version. Caveat: unpacker loads the whole PE into RAM — >2 GB exes surfaced as an error, not a crash. |
+| **EnigmaVB-packed exe** (huge `Game.exe`, no game dir beside it, `.enigma1` section) | Auto-unpacked in-process via vendored module (`--no-exe` equivalent: file tree only, no Windows stub rebuild); then normal pipeline. Card shows EnigmaVB version. Caveat: unpacker memory-loads the PE — exes > 4 GiB refused (PE 32-bit offset limit), larger-than-RAM exes refused with a size report; Node's `readFileSync` 2 GiB cap is bypassed via chunked explicit reads. |
 | 32-bit Windows game | Informational note only |
 | Wrong-case asset references | **Auto-fixed in the output copy** by the case-sensitivity scanner (§8.5) |
 | Case-only-distinct asset files | Both kept + conflict warning; fails the card on case-insensitive destinations (§8.5) |
