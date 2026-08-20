@@ -1,6 +1,6 @@
 'use strict';
 // Integration: port every fixture game and boot it headless, asserting the
-// title scene. Run: RPGPORT_IT=1 node test/integration/boot-test.js
+// title scene. Run: RPGLPORT_IT=1 node test/integration/boot-test.js
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -51,7 +51,7 @@ function evaluate(out) {
 }
 
 async function main() {
-  if (process.env.RPGPORT_IT !== '1') { console.log('skip: set RPGPORT_IT=1'); return; }
+  if (process.env.RPGLPORT_IT !== '1') { console.log('skip: set RPGLPORT_IT=1'); return; }
   const assert = require('node:assert');
   const { pool } = listPool(path.join(__dirname, '..', '..'));
   assert(pool.length >= 6, 'pool missing runtimes');
@@ -61,7 +61,7 @@ async function main() {
   const xvfb = spawn('Xvfb', [':97', '-screen', '0', '1280x810x24'], { stdio: 'ignore' });
   xvfb.on('error', (e) => { console.error('Xvfb spawn failed:', e.message); process.exit(1); });
   await new Promise(r => setTimeout(r, 1500));
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'rpgport-it-'));
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'rpglport-it-'));
   let failed = 0;
   try {
     for (const game of FIXTURES) {

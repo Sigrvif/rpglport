@@ -11,7 +11,7 @@ const { listPool } = require('./select');
 const { scan } = require('./casescan');
 const { buildPort } = require('./port');
 
-const TMP = () => path.join(os.homedir(), '.cache', 'rpgport', 'tmp');
+const TMP = () => path.join(os.homedir(), '.cache', 'rpglport', 'tmp');
 let cardSeq = 0;
 
 function analyzeCard(gameDir, source, extra = {}) {

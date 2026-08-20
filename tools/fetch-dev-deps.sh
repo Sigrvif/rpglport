@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Fetch dev dependencies: static 7zz, host NW.js runtime, ladder runtimes.
-# Reuses cached files in $RPGPORT_DL_CACHE (default /tmp/kilo) to stay offline-friendly.
+# Reuses cached files in $RPGLPORT_DL_CACHE (default /tmp/kilo) to stay offline-friendly.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-CACHE="${RPGPORT_DL_CACHE:-/tmp/kilo}"
+CACHE="${RPGLPORT_DL_CACHE:-/tmp/kilo}"
 mkdir -p "$CACHE" bin runtimes _host
 
 fetch() { # fetch <url> <dest>

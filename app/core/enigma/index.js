@@ -2,7 +2,7 @@
 // Wrapper around the vendored EnigmaVB unpacker (unmodified upstream modules,
 // v1.1.0: file-backed parsing — headers parsed eagerly, payload read on demand
 // via the PE's fd, so memory stays flat regardless of exe size).
-// RPGPort only needs the embedded file TREE — the rebuilt Windows stub exe is
+// RPGLPort only needs the embedded file TREE — the rebuilt Windows stub exe is
 // never written (equivalent of upstream's --no-exe).
 const fs = require('fs');
 const path = require('path');

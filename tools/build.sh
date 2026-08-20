@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Build the distributable RPGPort bundle (spec §3.4, §12).
+# Build the distributable RPGLPort bundle (spec §3.4, §12).
 # Usage: ./tools/build.sh [x64|arm64]   (default x64; arm64 = host-only pool)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ARCH="${1:-x64}"
 LADDER="0.12.3 0.19.5 0.22.3 0.29.0 0.48.4"
 WORK="dist/build"
-OUT="dist/RPGPort"
+OUT="dist/RPGLPort"
 rm -rf "$WORK" "$OUT" && mkdir -p "$WORK" "$OUT" dist
 
 # 0. versions.json (fetch if missing so any connected machine can build)
@@ -28,6 +28,7 @@ rm "$WORK/host.tar.gz"
 
 # 2. app + tools + 7zz
 cp -a app "$OUT/app"
+cp package.json "$OUT/package.json"   # NW manifest (main/window) — without it nw . shows a blank window
 mkdir -p "$OUT/bin" "$OUT/tools"
 curl -fsSL "https://www.7-zip.org/a/7z2602-linux-x64.tar.xz" -o "$WORK/7z.tar.xz"
 tar -xJf "$WORK/7z.tar.xz" -C "$WORK" 7zz && mv "$WORK/7zz" "$OUT/bin/7zz"
@@ -45,12 +46,12 @@ fi
 
 # 4. build.json + launcher
 node -e "const fs=require('fs');const l='$LADDER'.split(' ');fs.writeFileSync('$OUT/build.json',JSON.stringify({host:'$HOST',arch:'$ARCH',ladder:l,mapSnapshot:JSON.parse(fs.readFileSync('app/core/nwmap.json')).generated,built:new Date().toISOString()},null,2))"
-cat > "$OUT/RPGPort.sh" <<'EOF'
+cat > "$OUT/RPGLPort.sh" <<'EOF'
 #!/bin/sh
 cd "$(dirname "$0")"
 exec ./nw . "$@"
 EOF
-chmod +x "$OUT/RPGPort.sh"
+chmod +x "$OUT/RPGLPort.sh"
 
 # 5. selftest the assembled bundle (uses OUT as bundle root)
 ( cd "$OUT" && node -e "
@@ -62,7 +63,7 @@ selftest(process.cwd()).then(r => {
 
 # 6. package
 STAMP=$(date +%Y%m%d)
-tar -cJf "dist/RPGPort-linux-${ARCH}-${STAMP}.tar.xz" -C dist RPGPort
-( cd dist && sha256sum "RPGPort-linux-${ARCH}-${STAMP}.tar.xz" > "RPGPort-linux-${ARCH}-${STAMP}.tar.xz.sha256" )
+tar -cJf "dist/RPGLPort-linux-${ARCH}-${STAMP}.tar.xz" -C dist RPGLPort
+( cd dist && sha256sum "RPGLPort-linux-${ARCH}-${STAMP}.tar.xz" > "RPGLPort-linux-${ARCH}-${STAMP}.tar.xz.sha256" )
 rm -rf "$WORK"
-echo "built dist/RPGPort-linux-${ARCH}-${STAMP}.tar.xz"
+echo "built dist/RPGLPort-linux-${ARCH}-${STAMP}.tar.xz"

@@ -83,5 +83,5 @@ test('elfArch + runtimeStamps on real runtimes', { skip: !fs.existsSync('runtime
 });
 
 test('runtimeStamps on missing dir returns not-ok', () => {
-  assert.equal(runtimeStamps('/nonexistent/rpgport-xyz').ok, false);
+  assert.equal(runtimeStamps('/nonexistent/rpglport-xyz').ok, false);
 });

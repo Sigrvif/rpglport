@@ -1,4 +1,4 @@
-# RPGPort
+# RPGLPort
 
 An **offline, self-contained** NW.js GUI that ports **Windows RPG Maker MV/MZ games to
 Linux**. Drop a game in, get a Linux-native port out — no compilation, no wine, no
@@ -7,11 +7,11 @@ unpacker) ships inside the bundle.
 
 ## Quick start
 
-1. Extract the release archive (`RPGPort-linux-x64-*.tar.xz`).
+1. Extract the release archive (`RPGLPort-linux-x64-*.tar.xz`).
 2. Run it:
 
    ```sh
-   ./RPGPort.sh
+   ./RPGLPort.sh
    ```
 
 3. Drag a game (or archive) onto the window and follow the cards.
@@ -27,7 +27,7 @@ unpacker) ships inside the bundle.
 
 ## Runtime pool
 
-Porting a game means marrying its payload to the right NW.js runtime. RPGPort keeps a
+Porting a game means marrying its payload to the right NW.js runtime. RPGLPort keeps a
 **pool**:
 
 - the **bundled ladder** `0.12.3 / 0.19.5 / 0.22.3 / 0.29.0 / 0.48.4` (covering the
@@ -78,13 +78,16 @@ listing the whole pool; overrides bypass policy but not the MZ floor.
 ```sh
 tools/fetch-dev-deps.sh        # static 7zz, host NW.js, ladder runtimes (cached)
 npm test                       # or: node --test test/
-RPGPORT_IT=1 node test/integration/boot-test.js   # port + headless-boot all fixture games
+RPGLPORT_IT=1 node test/integration/boot-test.js   # port + headless-boot all fixture games
 ./tools/build.sh x64           # build the distributable bundle (fresh downloads)
 ```
 
 `tools/verify-runtime.cjs <dir>` checks any extracted runtime dir for pool admission.
 
 ## Credits
+
+RPGLPort made by Shisaye
+anime-sharing.com
 
 - EnigmaVB unpacker by **Shisaye**, vendored under `app/core/enigma` (MIT license).
 - **7-Zip** by Igor Pavlov (bundled as the static `7zz` binary).

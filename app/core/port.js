@@ -31,7 +31,7 @@ const FONTCONFIG_CONF = `<?xml version="1.0"?>
 <fontconfig>
   <dir>/usr/share/fonts</dir>
   <dir>~/.local/share/fonts</dir>
-  <cachedir>/tmp/rpgport-fontcache</cachedir>
+  <cachedir>/tmp/rpglport-fontcache</cachedir>
   <alias><family>sans-serif</family><prefer>
     <family>DejaVu Sans</family><family>Noto Sans</family><family>Noto Sans CJK JP</family>
   </prefer></alias>
@@ -48,7 +48,7 @@ const NW_WRAPPER = '#!/bin/sh\nd="$(dirname -- "$0")"\nexport FONTCONFIG_FILE="$
 function slugify(name) {
   const s = name.normalize('NFKD').replace(/[^\w\s.-]/g, '').trim()
     .replace(/[\s_.-]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
-  return s || 'rpg-port-game';
+  return s || 'rpgl-port-game';
 }
 
 function copyTree(src, dst, { onFile, cancel, skip } = {}) {
@@ -224,7 +224,7 @@ async function buildPort(opts) {
     fs.writeFileSync(path.join(tmp, 'start.sh'), '#!/bin/sh\ncd "$(dirname "$0")"\nexec ./nw "$@"\n');
     fs.chmodSync(path.join(tmp, 'start.sh'), 0o755);
     const lines = [
-      'RPGPort — generated Linux port',
+      'RPGLPort — generated Linux port',
       `runtime: ${path.basename(runtimeDir)}`,
       `detected: ${info.detectedNW || 'unknown'}`,
       ...notes.map(n => `note: ${n}`),

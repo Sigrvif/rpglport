@@ -8,7 +8,7 @@ const nwmap = require('./nwmap.json');
 const { cmpVer } = require('./detect');
 
 const MZ_FLOOR = '0.44.0';
-const IMPORT_DIR = () => path.join(os.homedir(), '.cache', 'rpgport', 'runtimes');
+const IMPORT_DIR = () => path.join(os.homedir(), '.cache', 'rpglport', 'runtimes');
 
 function chromeMajorOf(version) {
   const c = nwmap.versions[version] && nwmap.versions[version].chromium;

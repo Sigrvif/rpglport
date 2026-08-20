@@ -33,7 +33,7 @@ test('slugify', () => {
   // All-Japanese names fall back to a constant slug (NOTES.txt records the original).
   assert.equal(slugify('game-mz-2 1.5'), '1-5');
   assert.equal(slugify('My GAME!'), 'my-game');
-  assert.equal(slugify('アニマ'), 'rpg-port-game');                           // never empty
+  assert.equal(slugify('アニマ'), 'rpgl-port-game');                           // never empty
 });
 
 test('buildPort end-to-end on real runtime', { skip: !haveRT }, async () => {

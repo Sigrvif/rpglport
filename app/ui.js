@@ -1,5 +1,5 @@
 'use strict';
-/* RPGPort GUI — thin layer over app/core (NW.js: Node available in page). */
+/* RPGLPort GUI — thin layer over app/core (NW.js: Node available in page). */
 const path = require('path');
 const fs = require('fs');
 const { shell } = require('nw.gui');
@@ -283,7 +283,7 @@ $('#btnImport').onclick = async () => {
   inp.type = 'file'; inp.accept = '.gz,.tgz';
   inp.onchange = async () => {
     const f = inp.files[0]; if (!f) return;
-    let dest = path.join(require('os').homedir(), '.cache', 'rpgport', 'runtimes');
+    let dest = path.join(require('os').homedir(), '.cache', 'rpglport', 'runtimes');
     try {
       const bundled = path.join(ROOT, 'runtimes');
       fs.accessSync(path.join(ROOT, 'runtimes'), fs.constants.W_OK);        // throws when read-only

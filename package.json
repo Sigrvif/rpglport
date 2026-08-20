@@ -1,10 +1,10 @@
 {
-  "name": "rpgport",
+  "name": "rpglport",
   "main": "app/index.html",
   "chromium-args": "--disable-devtools",
   "scripts": { "test": "node --test test/*.test.js" },
   "window": {
-    "title": "RPGPort",
+    "title": "RPGLPort",
     "width": 1100,
     "height": 780,
     "min_width": 800,

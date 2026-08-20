@@ -1,4 +1,4 @@
-# RPGPort — Self-Contained GUI Porting Tool for RPG Maker MV/MZ (Windows → Linux)
+# RPGLPort — Self-Contained GUI Porting Tool for RPG Maker MV/MZ (Windows → Linux)
 
 **Date:** 2026-08-19
 **Status:** Approved design, pending implementation plan
@@ -11,7 +11,7 @@ means replacing that runtime with the same-version (or compatible newer) Linux N
 build while preserving the game payload. This works reliably because the game engine
 itself is plain JavaScript shipped inside the game folder.
 
-RPGPort is a **self-contained, offline GUI tool** that automates this for common Linux
+RPGLPort is a **self-contained, offline GUI tool** that automates this for common Linux
 distros (Arch, Ubuntu, and anything with comparable glibc/libraries). Priorities:
 
 1. Zero dependencies for the end user (single folder, no install, no network).
@@ -22,7 +22,7 @@ distros (Arch, Ubuntu, and anything with comparable glibc/libraries). Priorities
 
 Existing assets this design builds on:
 
-- `rpgport.py` — validated CLI proof-of-concept (detection, selection, execstack fix,
+- `rpglport.py` — validated CLI proof-of-concept (detection, selection, execstack fix,
   port assembly). Its logic ports 1:1 to JavaScript.
 - `Linux Port testing/EnigmaNodeUnpacker/` — pure-Node, zero-dependency Enigma Virtual
   Box unpacker (v4.10–10.80, x86/x64, path-traversal protection, ~1s/GB). Vendored.
@@ -56,10 +56,10 @@ successful GUI launch proves the host has every native library a ported game nee
 ### 3.2 Deliverable layout
 
 ```
-RPGPort/                            # one archive, extracted once (~2 GB on disk)
+RPGLPort/                            # one archive, extracted once (~2 GB on disk)
 ├── nw, lib/, *.pak, locales/, ...  # modern NW.js runtime (GUI host + newest pool entry)
 ├── package.json                    # main: app/index.html
-├── RPGPort.sh                      # launcher: cd "$(dirname "$0")" && exec ./nw "$@"
+├── RPGLPort.sh                      # launcher: cd "$(dirname "$0")" && exec ./nw "$@"
 ├── bin/7zz                         # static 7-Zip (zip/7z/rar; no distro deps)
 ├── app/
 │   ├── index.html, ui.js, style.css
@@ -98,7 +98,7 @@ already compresses everything once) and an extraction/cache layer for no benefit
   Entries are immutable after admission (imports add directories; nothing inside an
   admitted runtime is modified).
 - **Imports:** a user-dropped `nwjs-*.tar.gz` extracts into `runtimes/` when the
-  bundle folder is writable; otherwise into `~/.cache/rpgport/runtimes/` (which then
+  bundle folder is writable; otherwise into `~/.cache/rpglport/runtimes/` (which then
   joins the pool like any other entry). Imported entries can be removed from the
   pool manager; bundled ones can't.
 
@@ -118,7 +118,7 @@ already compresses everything once) and an extraction/cache layer for no benefit
 
 - Drop zone / file picker accepts **game folders** and **archives** (`.zip`, `.7z`,
   `.rar`; also DLsite-typical nested layouts). Multiple drops = multiple queue cards.
-- Archives extract to a temp dir (`~/.cache/rpgport/tmp/`); a setting controls whether
+- Archives extract to a temp dir (`~/.cache/rpglport/tmp/`); a setting controls whether
   the extracted copy is kept or cleaned after porting (default: clean).
 - **Nesting resolution:** after extraction (or for dropped folders), locate game roots
   by finding `package.json`+`www/` (MV) or root `index.html`+`js/rmmz_*` (MZ). One
