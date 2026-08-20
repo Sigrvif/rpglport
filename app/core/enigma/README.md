@@ -132,11 +132,13 @@ Depending on the compression flag and version code:
 - **Uncompressed** (`compressed_flag = 0`): Raw byte-for-byte copy from the
   data area.
 - **Single-block aPLib** (codes 1–3, compressed): Decompress the stored data
-  in one shot.
+  in one shot (the decompressed file must fit in a single Buffer; chunked
+  formats used by codes 4–7 have no such limit).
 - **Chunked aPLib** (codes 4–7, compressed): The file data is preceded by a
   chunk table (12-byte entries: 8-byte offset + 4-byte size). Each chunk
   decompresses to at most 64 KiB. Chunks are decompressed sequentially and
-  concatenated.
+  written directly to disk — no whole-file buffer, so decompressed files may
+  exceed 2 GiB.
 
 ### 6. PE Rebuild
 
@@ -205,9 +207,19 @@ Japanese (UTF-16LE) filenames are extracted correctly on all platforms.
 | Game_boxed.exe (x86 8.20) | 385 MB packed → 340 MB unpacked | 1542 | ~0.5s |
 | 悪逆無道の徒花よ.exe (x64 9.50) | 961 MB packed → 957 MB unpacked | 1879 | ~1.0s |
 
-The tool loads the entire packed PE into memory (required for random-access
-reading of the file table and data offsets). For very large files (>2 GB) on
-32-bit Node.js, this may fail due to address space limits — use 64-bit Node.js.
+The packed exe is **not** loaded into memory: only the PE headers are parsed
+up front and all data (file table, embedded files) is read from disk on
+demand through a 64 KiB read-ahead window. Extracted files are decompressed
+and written chunk-by-chunk. Memory use stays flat (a few MiB) regardless of
+exe size, and packed exes **and** embedded files larger than 2 GiB are
+supported.
+
+> **History:** versions before 1.1.0 read the whole exe with
+> `fs.readFileSync()`, which refuses files larger than 2 GiB
+> (`ERR_FS_FILE_TOO_LARGE`) on **every** architecture — 32-bit and 64-bit
+> alike — and failed single-shot `fs.writeSync()` calls with
+> `ERR_OUT_OF_RANGE` for decompressed files past 2 GiB. If you need to unpack
+> files that large, use 1.1.0 or newer.
 
 ---
 
@@ -219,19 +231,23 @@ The modules can be used programmatically:
 const { parsePE } = require('./pe-utils.js');
 const { parseEnigmaHeader, detectVersion, Unpacker, Stream } = require('./enigma-vb.js');
 
-const pe = parsePE('packed.exe');
-const e1 = pe.findSection('.enigma1');
-const hdr = parseEnigmaHeader(pe, e1);
-const [label, code] = detectVersion(pe, e1, hdr);
-console.log(`EnigmaVB ${label} (code ${code})`);
+const pe = parsePE('packed.exe');        // file-backed: only headers are read
+try {
+  const e1 = pe.findSection('.enigma1');
+  const hdr = parseEnigmaHeader(pe, e1);
+  const [label, code] = detectVersion(pe, e1, hdr);
+  console.log(`EnigmaVB ${label} (code ${code})`);
 
-const stream = new Stream(pe.data);
-const up = new Unpacker(stream, code, e1.rawOffset + hdr.evbPtr, hdr.compressedFlag);
-up.walk();
+  const stream = new Stream(pe);        // reads on demand from the file
+  const up = new Unpacker(stream, code, e1.rawOffset + hdr.evbPtr, hdr.compressedFlag);
+  up.walk();
 
-for (const file of up.files) {
-  console.log(file.path, file.size);
-  // up.extractFile(file, outputPath);
+  for (const file of up.files) {
+    console.log(file.path, file.size);
+    // up.extractFile(file, outputPath);
+  }
+} finally {
+  pe.close();
 }
 ```
 
@@ -244,8 +260,10 @@ for (const file of up.files) {
   write them to disk (they are not files).
 - **PE rebuild fidelity**: The `_unpacked.exe` is functional but may not be
   byte-identical to the original tool's output (see note in section 6 above).
-- **Large files**: The entire packed PE is loaded into memory. Files larger
-  than available RAM or 32-bit address space are not supported.
+- **Large files**: Supported well past 2 GiB — the exe is parsed and read
+  file-backed (never buffered whole), and extraction streams to disk. The
+  only residual limit is single-block aPLib (codes 1–3, compressed), where
+  one member must decompress into a single Buffer.
 - **Untested versions**: Only codes 6 (v8.20) and 7 (v9.50) have been tested
   against real data. Codes 1–5 are implemented per the disassembly but have
   no test files available.

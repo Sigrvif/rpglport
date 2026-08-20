@@ -1,56 +1,27 @@
 'use strict';
-// Wrapper around the vendored EnigmaVB unpacker (unmodified upstream modules).
+// Wrapper around the vendored EnigmaVB unpacker (unmodified upstream modules,
+// v1.1.0: file-backed parsing — headers parsed eagerly, payload read on demand
+// via the PE's fd, so memory stays flat regardless of exe size).
 // RPGPort only needs the embedded file TREE — the rebuilt Windows stub exe is
 // never written (equivalent of upstream's --no-exe).
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
 const { readPE } = require('../pe');                 // our lightweight parser for detection
 const upstream = require('./enigma-vb.js');          // { parseEnigmaHeader, detectVersion, Unpacker, Stream }
-const upstreamPE = require('./pe-utils.js');         // { PE, parsePE }
+const upstreamPE = require('./pe-utils.js');         // { PE, parsePE (file-backed, needs close()) }
 
-// PE section offsets are 32-bit — the parser cannot address anything past
-// 4 GiB into a file, so bigger packed exes are refused on format grounds.
+// PE section offsets are 32-bit — the format cannot place .enigma1 data
+// reliably beyond the 4 GiB mark, and nothing that big has ever been seen in
+// the wild. Refused conservatively with a clear message.
 const PE_FORMAT_LIMIT = 4n * 1024n * 1024n * 1024n;
 
 const fmtGiB = (bytes) => `${(Number(bytes) / 1024 ** 3).toFixed(1)} GiB`;
 
-// The unpacker memory-loads the whole packed PE. The only real constraints on
-// 64-bit Node are free RAM and the 4 GiB PE offset limit — NOT the historic
-// "2 GiB" figure (that was 32-bit address space folklore upstream, plus the
-// fact that fs.readFileSync itself caps at 2 GiB, which readFileBig bypasses).
-function admitSize(size, freeBytes) {
+function admitSize(size) {
   if (BigInt(size) > PE_FORMAT_LIMIT) {
     return { ok: false, reason: `packed exe is ${fmtGiB(size)} — beyond the 4 GiB PE offset limit; EnigmaVB data there would be unaddressable` };
   }
-  if (size > Math.floor(freeBytes * 0.75)) {
-    return { ok: false, reason: `packed exe is ${fmtGiB(size)} but only ${fmtGiB(freeBytes)} of RAM is free — close other applications and retry` };
-  }
   return { ok: true, reason: '' };
-}
-
-// fs.readFileSync throws ERR_FS_FILE_TOO_LARGE for anything over 2 GiB, and
-// fs.readSync's length/offset params are int32-bounded — so read through a
-// bounded chunk buffer into a pre-allocated Buffer (legal up to
-// buffer.constants.MAX_LENGTH, far beyond anything EnigmaVB can produce).
-function readFileBig(file) {
-  const fd = fs.openSync(file, 'r');
-  try {
-    const size = fs.fstatSync(fd).size;
-    const buf = Buffer.allocUnsafe(size);
-    const chunk = Buffer.allocUnsafe(Math.min(16 * 1024 * 1024, Math.max(size, 1)));
-    let read = 0;
-    while (read < size) {
-      const want = Math.min(chunk.length, size - read);
-      const n = fs.readSync(fd, chunk, 0, want, read); // position accepts > 2^31
-      if (n <= 0) throw new Error('short read');
-      chunk.copy(buf, read, 0, n);
-      read += n;
-    }
-    return buf;
-  } finally {
-    fs.closeSync(fd);
-  }
 }
 
 function isPacked(peBuf) {
@@ -72,31 +43,29 @@ function toPosix(rel) { return String(rel).replace(/\\/g, '/'); }
 
 async function unpack(packedExe, outDir, onProgress) {
   const size = fs.statSync(packedExe).size;
-  const admitted = admitSize(size, os.freemem());
+  const admitted = admitSize(size);
   if (!admitted.ok) throw new Error(admitted.reason);
-  let data;
+  const pe = upstreamPE.parsePE(packedExe);          // file-backed: flat memory, no 2 GiB cap
   try {
-    data = readFileBig(packedExe);
-  } catch (e) {
-    throw new Error(`could not load packed exe into memory: ${e.message}`);
+    const e1 = (pe.sections || []).find(s => /^\.?enigma1$/i.test(s.name));
+    if (!e1) throw new Error('no .enigma1 section — not an EnigmaVB-packed exe');
+    const hdr = upstream.parseEnigmaHeader(pe, e1);
+    const [label, code] = upstream.detectVersion(pe, e1, hdr);
+    const stream = new upstream.Stream(pe);          // file-backed stream (read-ahead cache)
+    const up = new upstream.Unpacker(stream, code, e1.rawOffset + hdr.evbPtr, hdr.compressedFlag);
+    up.walk();
+    fs.mkdirSync(outDir, { recursive: true });
+    let done = 0;
+    for (const file of up.files) {
+      const dest = safeJoin(outDir, toPosix(file.path));
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      up.extractFile(file, dest);
+      if (onProgress && ++done % 100 === 0) onProgress(done, up.files.length);
+    }
+    return { enigmaVersion: label, fileCount: up.files.length, outDir };
+  } finally {
+    pe.close();                                      // release the fd on every path
   }
-  const pe = new upstreamPE.PE(data);
-  const e1 = (pe.sections || []).find(s => /^\.?enigma1$/i.test(s.name));
-  if (!e1) throw new Error('no .enigma1 section — not an EnigmaVB-packed exe');
-  const hdr = upstream.parseEnigmaHeader(pe, e1);
-  const [label, code] = upstream.detectVersion(pe, e1, hdr);
-  const stream = new upstream.Stream(pe.data);
-  const up = new upstream.Unpacker(stream, code, e1.rawOffset + hdr.evbPtr, hdr.compressedFlag);
-  up.walk();
-  fs.mkdirSync(outDir, { recursive: true });
-  let done = 0;
-  for (const file of up.files) {
-    const dest = safeJoin(outDir, toPosix(file.path));
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    up.extractFile(file, dest);
-    if (onProgress && ++done % 100 === 0) onProgress(done, up.files.length);
-  }
-  return { enigmaVersion: label, fileCount: up.files.length, outDir };
 }
 
-module.exports = { isPacked, unpack, toPosix, safeJoin, admitSize, readFileBig };
+module.exports = { isPacked, unpack, toPosix, safeJoin, admitSize };

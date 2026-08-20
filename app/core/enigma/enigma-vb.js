@@ -10,26 +10,57 @@ const fs = require("fs");
 const path = require("path");
 const { decompress: aplibDecompress } = require("./aplib.js");
 const { X86_TABLE, X64_TABLE } = require("./version-tables.js");
-const { PE, rebuildPE } = require("./pe-utils.js");
+const { PE, rebuildPE, writeAll } = require("./pe-utils.js");
 
 const MAGIC_MZ8P = 0x505a384d;
 const MAGIC_MZ8X = 0x905a384d;
 
 // ---------------------------------------------------------------------------
-// Stream — read-only cursor over a Buffer
+// Stream — read-only cursor over a Buffer or a file-backed PE
 // ---------------------------------------------------------------------------
+// Passing a PE keeps memory flat regardless of exe size: small reads are
+// served from a 64 KiB read-ahead cache and larger reads go straight to the
+// file. (A Buffer is still accepted for legacy in-memory use.) Note that
+// fs.readFileSync() cannot read files larger than 2 GiB at all.
+
+const STREAM_CACHE = 1 << 16; // 64 KiB
 
 class Stream {
-  constructor(data, pos = 0) {
-    this.data = data;
+  constructor(source, pos = 0) {
     this.pos = pos;
+    if (Buffer.isBuffer(source)) {
+      this.data = source;
+    } else {
+      this.src = source; // file-backed PE ({ readAt, size })
+      this._cache = null;
+      this._cacheStart = 0;
+    }
   }
   seek(pos) { this.pos = pos; }
   read(n) {
-    const end = this.pos + n;
-    if (end > this.data.length) throw new Error(`read past EOF at 0x${this.pos.toString(16)}+0x${n.toString(16)}`);
-    const b = this.data.subarray(this.pos, end);
-    this.pos = end;
+    let b;
+    if (this.data) {
+      const end = this.pos + n;
+      if (end > this.data.length) throw new Error(`read past EOF at 0x${this.pos.toString(16)}+0x${n.toString(16)}`);
+      b = this.data.subarray(this.pos, end);
+    } else if (n === 0) {
+      return Buffer.alloc(0);
+    } else if (n >= STREAM_CACHE) {
+      b = this.src.readAt(this.pos, n); // may throw past EOF
+      this._cache = null;
+    } else {
+      const cs = this.pos - this._cacheStart;
+      if (!this._cache || cs < 0 || cs + n > this._cache.length) {
+        this._cache = this.src.readAt(this.pos, Math.min(STREAM_CACHE, this.src.size - this.pos)); // may throw past EOF
+        this._cacheStart = this.pos;
+      }
+      const off = this.pos - this._cacheStart;
+      if (off + n > this._cache.length) {
+        throw new Error(`read past EOF at 0x${this.pos.toString(16)}+0x${n.toString(16)}`);
+      }
+      b = this._cache.subarray(off, off + n);
+    }
+    this.pos += n;
     return b;
   }
   u8() { return this.read(1)[0]; }
@@ -49,11 +80,10 @@ class Stream {
 function parseEnigmaHeader(pe, e1) {
   const isX64 = pe.isPE32Plus;
   const base = e1.rawOffset;
-  const data = pe.data;
 
   const flagsOff = base + (isX64 ? 0x8c : 0x74);
-  const flags = [data[flagsOff], data[flagsOff + 1], data[flagsOff + 2], data[flagsOff + 3]];
-  const allLeOne = flags.every(b => b <= 1);
+  const flags = pe.readAt(flagsOff, 4);
+  const allLeOne = flags[0] <= 1 && flags[1] <= 1 && flags[2] <= 1 && flags[3] <= 1;
   let b4Base;
   if (isX64) {
     b4Base = allLeOne ? 0 : 4;   // inverted from x86
@@ -74,11 +104,11 @@ function parseEnigmaHeader(pe, e1) {
   let chosen = null;
   for (const [b8, bc, b4Extra] of search) {
     const ptrOff = base + primary + b8;
-    if (ptrOff + 4 > data.length) continue;
-    const ptr = data.readUInt32LE(ptrOff);
+    if (ptrOff + 4 > pe.size) continue;
+    const ptr = pe.readAt(ptrOff, 4).readUInt32LE(0);
     const sigOff = base + ptr;
-    if (sigOff + 4 > data.length) continue;
-    const sig = data.readUInt32LE(sigOff);
+    if (sigOff + 4 > pe.size) continue;
+    const sig = pe.readAt(sigOff, 4).readUInt32LE(0);
     if (sig === 0x00425645) { // "EVB\0"
       chosen = { evbPtr: ptr, b8, bc, b4: b4Base + b4Extra };
       break;
@@ -88,10 +118,10 @@ function parseEnigmaHeader(pe, e1) {
 
   const { evbPtr, b8, bc, b4 } = chosen;
 
-  const compressedFlag = data[base + b4 + (isX64 ? 0x8c : 0x70)];
-  const dataSize = data.readUInt32LE(base + b4 + (isX64 ? 0x88 : 0x6c));
-  const loaderUncSize = data.readUInt32LE(base + b4 + (isX64 ? 0x98 : 0x74));
-  const loaderCompSize = data.readUInt32LE(base + b4 + (isX64 ? 0x9c : 0x78));
+  const compressedFlag = pe.readAt(base + b4 + (isX64 ? 0x8c : 0x70), 1)[0];
+  const dataSize = pe.readAt(base + b4 + (isX64 ? 0x88 : 0x6c), 4).readUInt32LE(0);
+  const loaderUncSize = pe.readAt(base + b4 + (isX64 ? 0x98 : 0x74), 4).readUInt32LE(0);
+  const loaderCompSize = pe.readAt(base + b4 + (isX64 ? 0x9c : 0x78), 4).readUInt32LE(0);
 
   return { isX64, b4, b8, bc, evbPtr, compressedFlag, dataSize, loaderUncSize, loaderCompSize };
 }
@@ -102,7 +132,6 @@ function parseEnigmaHeader(pe, e1) {
 
 function detectVersion(pe, e1, hdr) {
   const base = e1.rawOffset;
-  const data = pe.data;
 
   if (hdr.loaderUncSize === 0) return [null, null];
 
@@ -110,14 +139,14 @@ function detectVersion(pe, e1, hdr) {
   let pos = -1;
   for (const delta of [0, 0x0a]) {
     const p = pos0 + delta;
-    if (p + 4 > data.length) continue;
-    const magic = data.readUInt32LE(p);
+    if (p + 4 > pe.size) continue;
+    const magic = pe.readAt(p, 4).readUInt32LE(0);
     if (magic === MAGIC_MZ8P || magic === MAGIC_MZ8X) { pos = p; break; }
   }
   if (pos < 0) return [null, null];
 
-  if (pos + hdr.loaderCompSize > data.length) return [null, null];
-  const comp = data.subarray(pos, pos + hdr.loaderCompSize);
+  if (pos + hdr.loaderCompSize > pe.size) return [null, null];
+  const comp = pe.readAt(pos, hdr.loaderCompSize);
   let dec;
   try {
     dec = aplibDecompress(comp, hdr.loaderUncSize);
@@ -379,13 +408,16 @@ class Unpacker {
     if (!this.compressedFlag) {
       s.seek(entry.dataPos);
       const fd = fs.openSync(outPath, "w");
-      let remaining = storedSize;
-      while (remaining > 0) {
-        const chunk = s.read(Math.min(remaining, 1 << 20));
-        fs.writeSync(fd, chunk);
-        remaining -= chunk.length;
+      try {
+        let remaining = storedSize;
+        while (remaining > 0) {
+          const chunk = s.read(Math.min(remaining, 1 << 20));
+          writeAll(fd, chunk);
+          remaining -= chunk.length;
+        }
+      } finally {
+        fs.closeSync(fd);
       }
-      fs.closeSync(fd);
       return true;
     }
 
@@ -394,7 +426,12 @@ class Unpacker {
       const comp = s.read(storedSize);
       try {
         const dec = aplibDecompress(comp, size);
-        fs.writeFileSync(outPath, dec);
+        const fd = fs.openSync(outPath, "w");
+        try {
+          writeAll(fd, dec); // chunked write: single fs.writeSync caps at 2 GiB
+        } finally {
+          fs.closeSync(fd);
+        }
         return true;
       } catch (e) {
         process.stderr.write(`[x] decompress failed for ${entry.path}: ${e.message}\n`);
@@ -402,31 +439,47 @@ class Unpacker {
       }
     }
 
-    // chunked aPLib
+    // chunked aPLib: decompress chunk-by-chunk straight to disk so neither
+    // memory use nor any single write scales with the file size (files that
+    // decompress past 2 GiB used to fail with ERR_OUT_OF_RANGE).
     s.seek(entry.dataPos);
-    const chunks = [];
-    let total = 0;
-    while (total < size) {
-      const chunkOff = Number(s.u64());
-      const chunkSize = s.u32();
-      const savedPos = s.pos;
-      const baseOff = this.code === 7
-        ? Number(BigInt(this.dataBase) + this.qword4861C4 + BigInt(chunkOff))
-        : entry.dataPos + chunkOff;
-      s.seek(baseOff);
-      const comp = s.read(chunkSize);
-      s.seek(savedPos);
-      try {
-        const dec = aplibDecompress(comp, 0x10000);
-        chunks.push(dec);
-        total += dec.length;
-      } catch (e) {
-        process.stderr.write(`[x] chunk decompress failed for ${entry.path}: ${e.message}\n`);
-        return false;
+    const fd = fs.openSync(outPath, "w");
+    let written = 0;
+    let ok = true;
+    let rethrow = null;
+    try {
+      while (written < size) {
+        const chunkOff = Number(s.u64());
+        const chunkSize = s.u32();
+        const savedPos = s.pos;
+        const baseOff = this.code === 7
+          ? Number(BigInt(this.dataBase) + this.qword4861C4 + BigInt(chunkOff))
+          : entry.dataPos + chunkOff;
+        s.seek(baseOff);
+        const comp = s.read(chunkSize);
+        s.seek(savedPos);
+        try {
+          const dec = aplibDecompress(comp, 0x10000);
+          const take = Math.min(dec.length, size - written);
+          writeAll(fd, dec.subarray(0, take));
+          written += take;
+        } catch (e) {
+          process.stderr.write(`[x] chunk decompress failed for ${entry.path}: ${e.message}\n`);
+          ok = false;
+          break;
+        }
       }
+    } catch (e) {
+      ok = false; // e.g. corrupt chunk table (read past EOF) — no partial file
+      rethrow = e;
+    } finally {
+      fs.closeSync(fd);
     }
-    const out = Buffer.concat(chunks).subarray(0, size);
-    fs.writeFileSync(outPath, out);
+    if (!ok) {
+      try { fs.unlinkSync(outPath); } catch (_) {}
+      if (rethrow) throw rethrow;
+      return false;
+    }
     return true;
   }
 }
