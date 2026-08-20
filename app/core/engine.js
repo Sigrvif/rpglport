@@ -105,7 +105,8 @@ async function portCard(card, opts) {
   if (!card.scan) card.scan = card.info.payloadRoot ? scan(card.info.payloadRoot) : { fixes: [], duplicates: [], conflicts: [], missing: [], counts: { fixes: 0, warnings: 0 } };
   return buildPort({
     gameDir: card.gameDir, info: card.info, scan: card.scan,
-    runtimeDir: opts.runtime.path, outParent: opts.outParent, dirName: opts.dirName,
+    runtimeDir: opts.runtime.path, runtimeVersion: opts.runtime.version,
+    outParent: opts.outParent, dirName: opts.dirName,
     onExists: opts.onExists || 'refuse', onProgress: opts.onProgress, cancel: opts.cancel,
   });
 }

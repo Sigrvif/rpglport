@@ -1,4 +1,5 @@
 bin/7zz
+tools/versions.json
 _host/
 runtimes/
 dist/

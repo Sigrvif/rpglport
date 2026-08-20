@@ -12,8 +12,10 @@ const { buildPort } = require('../../app/core/port');
 const { FIXTURES } = require('../helpers/fixtures');
 
 // Known pre-existing game bugs tolerated in the errors= line (present on Windows too).
-// The probe records "message @ source-url" so file-targeted patterns can match.
-const TOLERATED = [/FPS\.js/, /PluginManagerEx is not defined/];
+// The probe records "message @ source-url" so file-targeted patterns can match;
+// PluginManagerEx must come from FloatVariables.js specifically (verified format:
+// "Uncaught ReferenceError: PluginManagerEx is not defined @ chrome-extension://<id>/www/js/plugins/FloatVariables.js").
+const TOLERATED = [/FPS\.js/, /PluginManagerEx is not defined @ .*plugins\/FloatVariables\.js/];
 
 function bootTest(portDir, win) {
   const idx = fs.existsSync(path.join(portDir, 'www', 'index.html'))
@@ -21,7 +23,7 @@ function bootTest(portDir, win) {
   const marker = path.join(portDir, '__BOOT__.txt');     // absolute path embedded in the probe — cwd-relative won't do
   const PROBE = `<script>(function(){var w=require('fs');var MARK=${JSON.stringify(marker)};window.__e=[];window.onerror=function(m,s){window.__e.push(String(m)+' @ '+String(s))};
 var t=0;(function p(){setTimeout(function(){var s=window.SceneManager&&SceneManager._scene;
-if(s&&/Title|Boot/.test(s.constructor.name)&&window.$dataSystem){w.writeFileSync(MARK,'scene='+s.constructor.name+'\\nerrors='+(window.__e.length?window.__e.slice(0,3).join('|'):'none'));return;}
+if(s&&/Title|Boot/.test(s.constructor.name)&&window.$dataSystem){w.writeFileSync(MARK,'scene='+s.constructor.name+'\\nerrors='+(window.__e.length?window.__e.slice(0,10).join('|'):'none'));return;}
 if(++t>20){w.writeFileSync(MARK,'TIMEOUT scene='+(s?s.constructor.name:'none'));return;}p();},3000);})();})();</script>`;
   const orig = fs.readFileSync(idx, 'utf8');
   const injected = orig.replace('</body>', PROBE + '</body>');
@@ -71,14 +73,20 @@ async function main() {
       if (sc.conflicts.length) { console.error('CONFLICTS', game, sc.conflicts); failed++; continue; }
       const r = await buildPort({
         gameDir: game, info, scan: sc, runtimeDir: pick.runtime.path,
+        runtimeVersion: pick.runtime.version,
         outParent: base, dirName: path.basename(game).slice(0, 40) + ' (Linux)', onExists: 'newname',
       });
       const out = await bootTest(r.finalDir, ':97');
       const v = evaluate(out);
       console.log(v.ok ? 'PASS' : 'FAIL', path.basename(game), '→', v.scene, '|', v.errors);
-      if (!v.ok) failed++;
+      if (!v.ok) { console.error('port dir (kept for debugging until base cleanup):', r.finalDir); failed++; }
     }
-  } finally { xvfb.kill(); }
+  } finally {
+    xvfb.kill();
+    // base is only needed during the loop; remove it here (finally runs after
+    // the loop completes) so port dirs + stderr logs never linger in /tmp.
+    fs.rmSync(base, { recursive: true, force: true });
+  }
   if (failed) { console.error(`${failed} fixture(s) failed`); process.exit(1); }
   console.log('integration: all fixtures passed');
 }

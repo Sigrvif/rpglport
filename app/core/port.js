@@ -144,13 +144,15 @@ async function buildPort(opts) {
     // 1b) Fontconfig workaround for old runtimes: real binary becomes nw.bin,
     // nw becomes a wrapper exporting FONTCONFIG_FILE. Every entry point
     // (start.sh, Test Run, direct ./nw) goes through the wrapper.
-    const mVer = path.basename(runtimeDir).match(/nwjs-v(\d+\.\d+\.\d+)/);
-    if (mVer && cmpVer(mVer[1], '0.30.0') < 0 && fs.existsSync(path.join(tmp, 'nw'))) {
+    // Gate on the selected runtime version (opts), not the directory name —
+    // renamed/copied runtime dirs must not disable the workaround.
+    const runtimeVersion = opts.runtimeVersion || (path.basename(runtimeDir).match(/nwjs-v(\d+\.\d+\.\d+)/) || [])[1] || '999.0.0';
+    if (cmpVer(runtimeVersion, '0.30.0') < 0 && fs.existsSync(path.join(tmp, 'nw'))) {
       fs.writeFileSync(path.join(tmp, 'fonts.conf'), FONTCONFIG_CONF);
       fs.renameSync(path.join(tmp, 'nw'), path.join(tmp, 'nw.bin'));
       fs.writeFileSync(path.join(tmp, 'nw'), NW_WRAPPER);
       fs.chmodSync(path.join(tmp, 'nw'), 0o755);
-      notes.push(`fontconfig workaround: old runtime ${mVer[1]} cannot parse modern fontconfig; nw wrapper pins FONTCONFIG_FILE to the bundled fonts.conf`);
+      notes.push(`fontconfig workaround: old runtime ${runtimeVersion} cannot parse modern fontconfig; nw wrapper pins FONTCONFIG_FILE to the bundled fonts.conf`);
     }
 
     // 2) Game payload with the case-fix plan applied (renames at copy time).
@@ -224,11 +226,16 @@ async function buildPort(opts) {
     const lines = [
       'RPGPort — generated Linux port',
       `runtime: ${path.basename(runtimeDir)}`,
+      `detected: ${info.detectedNW || 'unknown'}`,
       ...notes.map(n => `note: ${n}`),
       ...warnings.map(w => `warning: ${w}`),
       ...scan.fixes.map(f => `case fix: ${f.actual} -> ${f.ref}`),
       ...scan.duplicates.map(d => `case duplicate: ${d.as} (from ${d.target})`),
       ...scan.missing.map(m => `missing asset: ${m}`),
+      'known issues:',
+      '- MV core < 1.6.0 on Chromium 66+: BGM may stay silent until first click',
+      '- NW.js ships no H.264/AAC: .m4a-only games have no audio (use .ogg)',
+      '- runtime-constructed asset paths cannot be case-checked — run the game once',
     ];
     fs.writeFileSync(path.join(tmp, 'NOTES.txt'), `${lines.join('\n')}\n`);
 

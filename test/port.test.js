@@ -6,6 +6,10 @@ const { buildPort, slugify } = require('../app/core/port');
 
 const RT = 'runtimes/nwjs-v0.29.0-linux-x64';  // real runtime from fetch-dev-deps
 const haveRT = fs.existsSync(path.join(RT, 'nw'));
+const RT2 = 'runtimes/nwjs-v0.48.4-linux-x64'; // modern runtime: no fontconfig workaround
+const haveRT2 = fs.existsSync(path.join(RT2, 'nw'));
+
+const isElf = (p) => fs.readFileSync(p).subarray(0, 4).toString('latin1') === '\x7fELF';
 
 function mkMV(base, name = 'Test Game') {
   const g = path.join(base, name.replace(/\s+/g, '_'));
@@ -66,6 +70,34 @@ test('buildPort end-to-end on real runtime', { skip: !haveRT }, async () => {
   assert.match(fs.readFileSync(path.join(port, 'NOTES.txt'), 'utf8'), /0\.29\.0/);
   const so = fs.readFileSync(path.join(port, 'lib/libnode.so'));
   assert.ok(so.length > 1000);
+  // <0.30 fontconfig gate: nw is a shell wrapper, real ELF moved to nw.bin.
+  const nw = fs.readFileSync(path.join(port, 'nw'), 'latin1');
+  assert.notEqual(nw.substring(0, 4), '\x7fELF');                             // wrapper, not ELF
+  assert.match(nw, /nw\.bin/);
+  assert.match(nw, /FONTCONFIG_FILE/);
+  assert.ok(isElf(path.join(port, 'nw.bin')));
+  assert.equal(fs.statSync(path.join(port, 'nw.bin')).mode & 0o777, 0o755);
+  assert.ok(fs.existsSync(path.join(port, 'fonts.conf')));
+});
+
+test('buildPort on 0.48.4 runtime: no fontconfig workaround', { skip: !haveRT2 }, async () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'port-new-'));
+  const game = mkMV(base);
+  const out = path.join(base, 'out');
+  const r = await buildPort({
+    gameDir: game,
+    info: { engine: 'MV', payloadRoot: path.join(game, 'www') },
+    scan: { fixes: [], duplicates: [], conflicts: [], missing: [], counts: { fixes: 0, warnings: 0 } },
+    runtimeDir: RT2,
+    runtimeVersion: '0.48.4',
+    outParent: out,
+    dirName: 'Test Game (Linux)',
+    onExists: 'refuse',
+  });
+  const port = r.finalDir;
+  assert.ok(isElf(path.join(port, 'nw')));                                     // real binary, no wrapper
+  assert.ok(!fs.existsSync(path.join(port, 'nw.bin')));
+  assert.ok(!fs.existsSync(path.join(port, 'fonts.conf')));
 });
 
 test('buildPort: existing dest refuse/overwrite/newname', { skip: !haveRT }, async () => {
