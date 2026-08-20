@@ -63,6 +63,29 @@ test('findLiveDisplays: connect-probes sockets, dead files ignored, :0 first', a
   } finally { srv.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('findProcDisplayPairs: parses environ, normalizes screen suffix, first pair wins, skips junk', () => {
+  const { findProcDisplayPairs } = require('../app/core/engine');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'proc-'));
+  const mk = (pid, kvs) => {
+    fs.mkdirSync(path.join(dir, pid));
+    fs.writeFileSync(path.join(dir, pid, 'environ'), kvs.map(kv => kv + '\0').join(''), );
+  };
+  mk('100', ['DISPLAY=:5', 'XAUTHORITY=/tmp/xa5']);
+  mk('200', ['DISPLAY=:6.0']);                       // screen suffix → :6, no authority
+  mk('300', ['DISPLAY=:5', 'XAUTHORITY=/other']);    // dup display → first-seen wins
+  mk('400', ['FOO=bar']);                            // no DISPLAY → skipped
+  mk('500', ['DISPLAY=host:0']);                     // remote form → skipped
+  fs.mkdirSync(path.join(dir, '600'));               // no environ → skipped
+  try {
+    const pairs = findProcDisplayPairs(dir).sort((a, b) => Number(a.display.slice(1)) - Number(b.display.slice(1)));
+    assert.deepEqual(pairs, [
+      { display: ':5', xauthority: '/tmp/xa5' },
+      { display: ':6', xauthority: null },
+    ]);
+    assert.deepEqual(findProcDisplayPairs(path.join(dir, 'missing')), []);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('selftest passes on dev layout', { skip: !fs.existsSync(SZ) }, async () => {
   const r = await selftest(process.cwd());
   assert.equal(r.ok, true, JSON.stringify(r.checks.filter(c => !c.ok)));

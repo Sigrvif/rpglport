@@ -3,7 +3,7 @@
 const path = require('path');
 const fs = require('fs');
 const { shell } = require('nw.gui');
-const { analyzeInput, portCard, PortQueue, selftest, findLiveDisplays, hasXvfbRun } = require('./core/engine');
+const { analyzeInput, portCard, PortQueue, selftest, findLiveDisplays, hasXvfbRun, findProcDisplayPairs } = require('./core/engine');
 const { listPool, choose } = require('./core/select');
 const settings = require('./core/settings');
 
@@ -239,48 +239,85 @@ function existsPrompt(outDir) {
 
 const { spawn } = require('child_process');
 
-// Test Run ladder: (1) inherited DISPLAY; (2) each live X socket in
-// /tmp/.X11-unix (the tool may carry a stale DISPLAY from where it was
-// launched, while the user's session has a working one); (3) headless
-// xvfb-run when nothing else exists. Only then: error with guidance.
-function doTestRun(card, forcedDisplay, viaXvfb) {
+// Test Run display ladder. A live X socket is NOT sufficient — the server can
+// reject the client during setup for lack of the session cookie (GTK reports
+// the same "cannot open display"). So we discover DISPLAY+XAUTHORITY pairs
+// from this user's running processes (the session where start.sh works has
+// them), then plain sockets with various authority guesses, then headless
+// xvfb-run. Only then: error with guidance.
+function testAttempt(card, { display, xauthority, viaXvfb }) {
+  return new Promise((resolve) => {
+    const env = { ...process.env };
+    let cmd = path.join(card.finalDir, 'nw');
+    let args = ['--no-sandbox'];
+    if (viaXvfb) {
+      cmd = 'xvfb-run';
+      args = ['-a', path.join(card.finalDir, 'nw'), '--no-sandbox'];
+    } else {
+      if (display) env.DISPLAY = display;
+      if (xauthority) env.XAUTHORITY = xauthority;
+      else delete env.XAUTHORITY;
+    }
+    let fatal = '';
+    const p = spawn(cmd, args, { cwd: card.finalDir, stdio: ['ignore', 'ignore', 'pipe'], env });
+    p.on('error', (e) => resolve({ kind: 'error', msg: e.message }));
+    p.stderr.on('data', (c) => { fatal += c; });
+    const t = setTimeout(() => { p.kill('SIGTERM'); resolve({ kind: 'ok', viaXvfb }); }, 8000);
+    p.on('close', (code, signal) => {
+      clearTimeout(t);
+      if (signal === 'SIGTERM' || code === 0 || code === null) resolve({ kind: 'ok', viaXvfb });
+      else if (/cannot open display/i.test(fatal)) resolve({ kind: 'no-display', fatal, code });
+      else resolve({ kind: 'crashed', fatal, code });
+    });
+  });
+}
+
+async function doTestRun(card) {
   if (!card.finalDir) return;
   setStatus(card, 'test run…');
-  let fatal = '';
-  const env = { ...process.env };
-  let cmd = path.join(card.finalDir, 'nw');
-  let args = ['--no-sandbox'];
-  if (viaXvfb) { cmd = 'xvfb-run'; args = ['-a', path.join(card.finalDir, 'nw'), '--no-sandbox']; }
-  else if (forcedDisplay) env.DISPLAY = forcedDisplay;
-  const p = spawn(cmd, args, { cwd: card.finalDir, stdio: ['ignore', 'ignore', 'pipe'], env });
-  p.on('error', e => { setStatus(card, `test run failed: ${e.message}`, 'error'); });
-  p.stderr.on('data', c => { fatal += c; });
-  const t = setTimeout(() => { p.kill('SIGTERM'); setStatus(card, viaXvfb ? 'launched OK headless (Xvfb — no window shown)' : 'launched OK (no early crash)', 'done'); }, 8000);
-  p.on('close', (code) => {
-    clearTimeout(t);
-    if (code !== 0 && code !== null && !/SIGTERM/.test(fatal)) {
-      if (/cannot open display/i.test(fatal) && !card._displayTried) {
-        card._displayTried = true;
-        (async () => {
-          const alts = (await findLiveDisplays()).filter(d => d !== (process.env.DISPLAY || ''));
-          if (alts.length) {
-            appendLog(card.id, `display ${process.env.DISPLAY || '(unset)'} unreachable — retrying on ${alts[0]}`);
-            doTestRun(card, alts[0]);
-          } else if (hasXvfbRun()) {
-            appendLog(card.id, `no reachable X display — retrying headless under xvfb-run`);
-            doTestRun(card, null, true);
-          } else {
-            setStatus(card, `no working display (DISPLAY=${process.env.DISPLAY || 'unset'}) — restart RPGLPort from the session where start.sh works, or install Xvfb on headless machines`, 'error');
-            appendLog(card.id, `test-run exit ${code}: ${fatal.slice(-500)}`);
-          }
-        })();
-        return;
-      }
-      const line = (fatal.match(/FATAL:[^\n]*|Check failed[^\n]*/) || [])[0] || `exit ${code}`;
+  // attempt 0: the tool's own environment, unchanged (right on normal desktops)
+  let r = await testAttempt(card, {});
+  if (r.kind === 'ok') return setStatus(card, 'launched OK (no early crash)', 'done');
+  if (r.kind === 'error') return setStatus(card, `test run failed: ${r.msg}`, 'error');
+  if (r.kind === 'crashed') {
+    const line = (r.fatal.match(/FATAL:[^\n]*|Check failed[^\n]*/) || [])[0] || `exit ${r.code}`;
+    setStatus(card, `crashed: ${line}`, 'error');
+    appendLog(card.id, `test-run exit ${r.code}: ${r.fatal.slice(-500)}`);
+    return;
+  }
+  // no-display: build candidate list and work through it
+  const live = new Set(await findLiveDisplays());
+  const candidates = [];
+  const seen = new Set();
+  const push = (display, xauthority) => {
+    const key = `${display}|${xauthority || ''}`;
+    if (!seen.has(key)) { seen.add(key); candidates.push({ display, xauthority }); }
+  };
+  for (const p of findProcDisplayPairs().filter(p => live.has(p.display))) push(p.display, p.xauthority);
+  for (const d of live) { push(d, process.env.XAUTHORITY); push(d, null); }
+  appendLog(card.id, `display ${process.env.DISPLAY || '(unset)'} unreachable — trying ${candidates.length} candidate(s): ${candidates.map(c => `${c.display}${c.xauthority ? '+auth' : ''}`).join(', ') || 'none'}`);
+  for (const c of candidates) {
+    r = await testAttempt(card, c);
+    if (r.kind === 'ok') {
+      setStatus(card, `launched OK on ${c.display}${c.xauthority ? ' (session authority)' : ''}`, 'done');
+      appendLog(card.id, `booted with DISPLAY=${c.display}${c.xauthority ? ` XAUTHORITY=${c.xauthority}` : ''}`);
+      return;
+    }
+    if (r.kind === 'crashed') {
+      const line = (r.fatal.match(/FATAL:[^\n]*|Check failed[^\n]*/) || [])[0] || `exit ${r.code}`;
       setStatus(card, `crashed: ${line}`, 'error');
-    } else setStatus(card, 'launched OK (exited)', 'done');
-    appendLog(card.id, `test-run exit ${code}: ${fatal.slice(-500)}`);
-  });
+      appendLog(card.id, `test-run exit ${r.code}: ${r.fatal.slice(-500)}`);
+      return;
+    }
+    if (r.kind === 'error') return setStatus(card, `test run failed: ${r.msg}`, 'error');
+  }
+  if (hasXvfbRun()) {
+    appendLog(card.id, 'no usable local display — retrying headless under xvfb-run');
+    r = await testAttempt(card, { viaXvfb: true });
+    if (r.kind === 'ok') return setStatus(card, 'launched OK headless (Xvfb — no window shown)', 'done');
+  }
+  setStatus(card, 'no usable display found — restart RPGLPort from the session where start.sh works (or install Xvfb on headless machines)', 'error');
+  appendLog(card.id, 'all display candidates rejected');
 }
 
 /* wiring */

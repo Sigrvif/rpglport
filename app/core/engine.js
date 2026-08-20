@@ -49,6 +49,40 @@ function hasXvfbRun() {
   return false;
 }
 
+// Working DISPLAY+XAUTHORITY pairs observed in this user's processes. A live
+// socket alone is not enough: the server may reject clients that lack the
+// session cookie (GTK then reports the same "cannot open display"). The pair
+// used by an already-running session process (terminal, file manager,
+// compositor helper) is authoritative. Same-uid processes only.
+function readEnviron(pidDir) {
+  try {
+    const buf = fs.readFileSync(path.join(pidDir, 'environ'));
+    const out = {};
+    for (const kv of buf.toString('latin1').split('\0')) {
+      const i = kv.indexOf('=');
+      if (i > 0) out[kv.slice(0, i)] = kv.slice(i + 1);
+    }
+    return out;
+  } catch { return null; }
+}
+
+function findProcDisplayPairs(procDir = '/proc') {
+  const uid = process.getuid();
+  const pairs = new Map(); // display -> xauthority | null (first seen wins)
+  let entries;
+  try { entries = fs.readdirSync(procDir, { withFileTypes: true }); } catch { return []; }
+  for (const e of entries) {
+    if (!e.isDirectory() || !/^\d+$/.test(e.name)) continue;
+    const d = path.join(procDir, e.name);
+    try { if (fs.statSync(d).uid !== uid) continue; } catch { continue; }
+    const env = readEnviron(d);
+    if (!env || !env.DISPLAY || !/^:\d+(\.\d+)?$/.test(env.DISPLAY)) continue;
+    const display = env.DISPLAY.replace(/\.\d+$/, '');  // :0.0 → :0
+    if (!pairs.has(display)) pairs.set(display, env.XAUTHORITY || null);
+  }
+  return [...pairs.entries()].map(([display, xauthority]) => ({ display, xauthority }));
+}
+
 function analyzeCard(gameDir, source, extra = {}) {
   return { id: `c${++cardSeq}`, name: path.basename(gameDir), gameDir, info: analyze(gameDir), source, warnings: [], ...extra };
 }
@@ -183,4 +217,4 @@ async function selftest(bundleRoot) {
   return { ok: checks.every(c => c.ok), checks };
 }
 
-module.exports = { analyzeInput, portCard, PortQueue, selftest, TMP, findLiveDisplays, hasXvfbRun };
+module.exports = { analyzeInput, portCard, PortQueue, selftest, TMP, findLiveDisplays, hasXvfbRun, findProcDisplayPairs };
