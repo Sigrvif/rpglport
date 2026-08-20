@@ -65,6 +65,7 @@ test('buildPort end-to-end on real runtime', { skip: !haveRT }, async (t) => {
   assert.ok(fs.existsSync(path.join(port, 'start.sh')));
   assert.ok(fs.statSync(path.join(port, 'start.sh')).mode & 0o111);
   assert.match(fs.readFileSync(path.join(port, 'start.sh'), 'latin1'), /GDK_BACKEND=x11/); // Wayland-poison hardening
+  assert.match(fs.readFileSync(path.join(port, 'start.sh'), 'latin1'), /LD_LIBRARY_PATH=/); // belt-and-braces lib resolution
   assert.match(fs.readFileSync(path.join(port, 'credits.html'), 'utf8'), /RPGLPort/);      // real credits, not the sample page
   const pkg = JSON.parse(fs.readFileSync(path.join(port, 'package.json'), 'utf8'));
   assert.equal(pkg.main, 'www/index.html');
@@ -79,6 +80,7 @@ test('buildPort end-to-end on real runtime', { skip: !haveRT }, async (t) => {
   assert.match(nw, /nw\.bin/);
   assert.match(nw, /FONTCONFIG_FILE/);
   assert.match(nw, /GDK_BACKEND=x11/);   // wrapper hardens too (Test Run / direct ./nw)
+  assert.match(nw, /LD_LIBRARY_PATH=/);  // belt-and-braces alongside rpath
   assert.match(nw, /&& pwd/);   // d must be absolutized — old fontconfig ignores a relative FONTCONFIG_FILE
   assert.ok(isElf(path.join(port, 'nw.bin')));
   assert.equal(fs.statSync(path.join(port, 'nw.bin')).mode & 0o777, 0o755);

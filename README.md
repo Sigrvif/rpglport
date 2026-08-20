@@ -16,6 +16,24 @@ unpacker) ships inside the bundle.
 
 3. Drag a game (or archive) onto the window and follow the cards.
 
+## Requirements
+
+Works on any reasonably current x86-64 Linux distro (Arch, Debian, Ubuntu, Fedora…):
+the bundled NW.js runtimes need glibc ≥ 2.25 (2017-era; everything since Debian 10 /
+Ubuntu 18.04 qualifies) and the standard GTK/X11 stack that desktop systems already
+have. On a **minimal or server install** (Debian/Ubuntu without a desktop), install
+the runtime libraries first:
+
+```sh
+# Debian / Ubuntu
+sudo apt install libgtk-3-0 libnss3 libasound2 libgbm1 libxss1
+```
+
+(`libxss1` is only needed by ports on the old ≤0.29 runtimes; on older releases the
+ALSA package is `libasound2t64` / `libasound2`.) Then run the tool and its ports under
+X11, XWayland, or headless via Xvfb. A display-server session is not required for
+porting — only for running the games.
+
 ## Supported inputs
 
 - **Game folders** (drag-drop or picker): a Windows MV/MZ game directory.

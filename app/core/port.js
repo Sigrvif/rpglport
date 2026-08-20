@@ -47,7 +47,7 @@ const FONTCONFIG_CONF = `<?xml version="1.0"?>
 // FONTCONFIG_FILE and falls back to the (unparseable) system config, which
 // aborts with InitDefaultFont(). Relative $0 happens on `./nw`, and via
 // start.sh's `exec ./nw "$@"`.
-const NW_WRAPPER = '#!/bin/sh\nd="$(cd -- "$(dirname -- "$0")" && pwd)"\nexport FONTCONFIG_FILE="${FONTCONFIG_FILE:-$d/fonts.conf}"\nexport GDK_BACKEND=x11\nexec "$d/nw.bin" "$@"\n';
+const NW_WRAPPER = '#!/bin/sh\nd="$(cd -- "$(dirname -- "$0")" && pwd)"\nexport FONTCONFIG_FILE="${FONTCONFIG_FILE:-$d/fonts.conf}"\nexport GDK_BACKEND=x11\nexport LD_LIBRARY_PATH="$d/lib:$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$d/nw.bin" "$@"\n'; // LD_LIBRARY_PATH: belt-and-braces alongside rpath (portable-bundle practice); lib/ modern, $d root for ≤0.12-era flat .so layout
 
 function slugify(name) {
   const s = name.normalize('NFKD').replace(/[^\w\s.-]/g, '').trim()
@@ -229,7 +229,7 @@ async function buildPort(opts) {
     // exports GDK_BACKEND=wayland (which old-NW GTK lacks entirely — it dies
     // with "cannot open display" regardless of X credentials) cannot break
     // the launch. Standard recipe for X11 GTK apps under Wayland sessions.
-    fs.writeFileSync(path.join(tmp, 'start.sh'), '#!/bin/sh\ncd "$(dirname "$0")"\nexport GDK_BACKEND=x11\nexec ./nw "$@"\n');
+    fs.writeFileSync(path.join(tmp, 'start.sh'), '#!/bin/sh\nd="$(cd -- "$(dirname "$0")" && pwd)"\nexport GDK_BACKEND=x11\nexport LD_LIBRARY_PATH="$d/lib:$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$d/nw" "$@"\n'); // LD_LIBRARY_PATH: belt-and-braces alongside rpath — don't rely on $ORIGIN alone
     fs.chmodSync(path.join(tmp, 'start.sh'), 0o755);
     // real credits over the runtime's sample placeholder page (shared ports
     // are public artifacts — attribution should be accurate)

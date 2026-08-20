@@ -55,6 +55,8 @@ node -e "const fs=require('fs');const l='$LADDER'.split(' ');fs.writeFileSync('$
 cat > "$OUT/RPGLPort.sh" <<'EOF'
 #!/bin/sh
 cd "$(dirname "$0")"
+# LD_LIBRARY_PATH alongside the binary's rpath — standard portable-bundle practice
+export LD_LIBRARY_PATH="$PWD/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec ./nw . "$@"
 EOF
 chmod +x "$OUT/RPGLPort.sh"
