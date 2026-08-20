@@ -65,6 +65,7 @@ test('buildPort end-to-end on real runtime', { skip: !haveRT }, async (t) => {
   assert.ok(fs.existsSync(path.join(port, 'start.sh')));
   assert.ok(fs.statSync(path.join(port, 'start.sh')).mode & 0o111);
   assert.match(fs.readFileSync(path.join(port, 'start.sh'), 'latin1'), /GDK_BACKEND=x11/); // Wayland-poison hardening
+  assert.match(fs.readFileSync(path.join(port, 'credits.html'), 'utf8'), /RPGLPort/);      // real credits, not the sample page
   const pkg = JSON.parse(fs.readFileSync(path.join(port, 'package.json'), 'utf8'));
   assert.equal(pkg.main, 'www/index.html');
   assert.equal(pkg['js-flags'], '--expose-gc');

@@ -25,6 +25,14 @@ function findRoot() {
   return path.dirname(process.execPath); // last resort; selftest will complain
 }
 const SZ = path.join(ROOT, 'bin', '7zz');
+// Version shown in the header: build.json (release) → package.json (dev) → ?
+function readVersion() {
+  for (const f of [path.join(ROOT, 'build.json'), path.join(ROOT, 'package.json')]) {
+    try { const v = JSON.parse(fs.readFileSync(f, 'utf8')).version; if (v) return v; } catch { /* next */ }
+  }
+  return '0.0.0-unknown';
+}
+const TOOL_VERSION = readVersion();
 const queue = new PortQueue();
 const state = { pool: [], rejected: [], cards: new Map(), settings: settings.load() };
 
@@ -47,7 +55,7 @@ function appendLog(id, line) {
 
 async function refreshPool() {
   ({ pool: state.pool, rejected: state.rejected } = listPool(ROOT));
-  $('#poolIndicator').textContent = `pool: ${state.pool.length} runtimes`;
+  $('#poolIndicator').textContent = `RPGLPort v${TOOL_VERSION} · pool: ${state.pool.length} runtimes`;
   const list = $('#poolList');
   list.innerHTML = '';
   for (const p of state.pool) {

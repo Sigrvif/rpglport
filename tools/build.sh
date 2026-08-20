@@ -26,13 +26,19 @@ node tools/verify-runtime.cjs "$WORK/$HOSTDIR" --allow-unnamed || { echo "host r
 rm -rf "$OUT" && mv "$WORK/$HOSTDIR" "$OUT"
 rm "$WORK/host.tar.gz"
 
-# 2. app + tools + 7zz
+# 2. app + manifest + 7zz (+ its license)
+VERSION=$(node -p "require('./package.json').version")
 cp -a app "$OUT/app"
 cp package.json "$OUT/package.json"   # NW manifest (main/window) — without it nw . shows a blank window
-mkdir -p "$OUT/bin" "$OUT/tools"
+cp README.md "$OUT/README.md"         # user-facing readme
+mkdir -p "$OUT/bin" "$OUT/licenses/7-Zip"
 curl -fsSL "https://www.7-zip.org/a/7z2602-linux-x64.tar.xz" -o "$WORK/7z.tar.xz"
-tar -xJf "$WORK/7z.tar.xz" -C "$WORK" 7zz && mv "$WORK/7zz" "$OUT/bin/7zz"
+tar -xJf "$WORK/7z.tar.xz" -C "$WORK" 7zz License.txt
+mv "$WORK/7zz" "$OUT/bin/7zz"
+mv "$WORK/License.txt" "$OUT/licenses/7-Zip/License.txt"
 chmod +x "$OUT/bin/7zz"
+# real credits replace the NW.js tarball's sample placeholder page
+cp app/credits-template.html "$OUT/credits.html"
 
 # 3. ladder runtimes (x64 only; arm64 bundle = host + imports per spec)
 if [ "$ARCH" = "x64" ]; then
@@ -45,7 +51,7 @@ if [ "$ARCH" = "x64" ]; then
 fi
 
 # 4. build.json + launcher
-node -e "const fs=require('fs');const l='$LADDER'.split(' ');fs.writeFileSync('$OUT/build.json',JSON.stringify({host:'$HOST',arch:'$ARCH',ladder:l,mapSnapshot:JSON.parse(fs.readFileSync('app/core/nwmap.json')).generated,built:new Date().toISOString()},null,2))"
+node -e "const fs=require('fs');const l='$LADDER'.split(' ');fs.writeFileSync('$OUT/build.json',JSON.stringify({version:'$VERSION',host:'$HOST',arch:'$ARCH',ladder:l,mapSnapshot:JSON.parse(fs.readFileSync('app/core/nwmap.json')).generated,built:new Date().toISOString()},null,2))"
 cat > "$OUT/RPGLPort.sh" <<'EOF'
 #!/bin/sh
 cd "$(dirname "$0")"
@@ -61,9 +67,9 @@ selftest(process.cwd()).then(r => {
   process.exit(r.ok ? 0 : 1);
 });" ) || { echo "bundle selftest failed"; exit 1; }
 
-# 6. package
-STAMP=$(date +%Y%m%d)
-tar -cJf "dist/RPGLPort-linux-${ARCH}-${STAMP}.tar.xz" -C dist RPGLPort
-( cd dist && sha256sum "RPGLPort-linux-${ARCH}-${STAMP}.tar.xz" > "RPGLPort-linux-${ARCH}-${STAMP}.tar.xz.sha256" )
+# 6. package (versioned name)
+ART="RPGLPort-${VERSION}-linux-${ARCH}.tar.xz"
+tar -cJf "dist/$ART" -C dist RPGLPort
+( cd dist && sha256sum "$ART" > "$ART.sha256" )
 rm -rf "$WORK"
-echo "built dist/RPGLPort-linux-${ARCH}-${STAMP}.tar.xz"
+echo "built dist/$ART"

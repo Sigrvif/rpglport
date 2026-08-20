@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>RPGLPort — Credits &amp; Licenses</title>
+<style>
+  body { font: 14px/1.6 system-ui, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; color: #222; }
+  h1 { font-size: 1.4rem; } h2 { font-size: 1.05rem; margin-top: 1.6rem; }
+  code { background: #f2f2f2; padding: 0 3px; border-radius: 3px; }
+  .lic { color: #555; } a { color: #0b57d0; }
+  footer { margin-top: 2rem; color: #777; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>RPGLPort — Credits &amp; Licenses</h1>
+<p>RPGLPort is a self-contained, offline tool that ports Windows RPG Maker MV/MZ
+games to Linux. It bundles the following software; each project's own license
+applies to its contribution. Full license texts are in the
+<code>licenses/</code> folder where noted, and inside <code>app/core/enigma/</code>
+for the EnigmaVB unpacker.</p>
+
+<h2>NW.js <span class="lic">(MIT License)</span></h2>
+<p>The GUI runtime, and the Linux game runtimes this tool installs into ports.
+Copyright &copy; NW.js contributors &middot; <a href="https://nwjs.io/">nwjs.io</a></p>
+
+<h2>Chromium, Blink, V8, Node.js <span class="lic">(BSD-style / MIT)</span></h2>
+<p>Components of the bundled NW.js runtimes, copyright their respective
+contributors (The Chromium Authors, the V8 authors, the Node.js contributors).
+The complete Chromium license attribution is available inside any NW.js/Chromium
+application via <code>chrome://credits</code>.</p>
+
+<h2>7-Zip (7zz) <span class="lic">(LGPL 2.1 with unRAR restriction)</span></h2>
+<p>Static CLI build, used for game archive extraction (<code>.zip</code>,
+<code>.7z</code>, <code>.rar</code>). Copyright &copy; Igor Pavlov &middot;
+<a href="https://www.7-zip.org/">7-zip.org</a> &middot;
+license text: <code>licenses/7-Zip/License.txt</code></p>
+
+<h2>EnigmaVB Unpacker <span class="lic">(MIT License)</span></h2>
+<p>Pure-Node unpacker for Enigma Virtual Box packed executables, vendored with
+light modifications under <code>app/core/enigma/</code>. By Shisaye
+(anime-sharing.com).</p>
+
+<footer>RPG Maker MV and RPG Maker MZ are trademarks of Gotcha Gotcha Games.
+RPGLPort is an independent tool and is not affiliated with or endorsed by
+Gotcha Gotcha Games, Kadokawa, or Enterbrain. It does not distribute any game
+engine — only permissively-licensed runtime components.</footer>
+</body>
+</html>

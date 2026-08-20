@@ -1,8 +1,11 @@
 {
+  "version": "1.0.0",
   "name": "rpglport",
   "main": "app/index.html",
   "chromium-args": "--disable-devtools",
-  "scripts": { "test": "node --test test/*.test.js" },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
   "window": {
     "title": "RPGLPort",
     "width": 1100,

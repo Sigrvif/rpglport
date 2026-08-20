@@ -231,6 +231,11 @@ async function buildPort(opts) {
     // the launch. Standard recipe for X11 GTK apps under Wayland sessions.
     fs.writeFileSync(path.join(tmp, 'start.sh'), '#!/bin/sh\ncd "$(dirname "$0")"\nexport GDK_BACKEND=x11\nexec ./nw "$@"\n');
     fs.chmodSync(path.join(tmp, 'start.sh'), 0o755);
+    // real credits over the runtime's sample placeholder page (shared ports
+    // are public artifacts — attribution should be accurate)
+    try {
+      fs.copyFileSync(path.join(__dirname, '..', 'credits-template.html'), path.join(tmp, 'credits.html'));
+    } catch { /* dev tree without template — runtime's own file stays */ }
     const lines = [
       'RPGLPort — generated Linux port',
       `runtime: ${path.basename(runtimeDir)}`,
