@@ -43,7 +43,11 @@ const FONTCONFIG_CONF = `<?xml version="1.0"?>
   </prefer></alias>
 </fontconfig>
 `;
-const NW_WRAPPER = '#!/bin/sh\nd="$(dirname -- "$0")"\nexport FONTCONFIG_FILE="${FONTCONFIG_FILE:-$d/fonts.conf}"\nexec "$d/nw.bin" "$@"\n';
+// d must be ABSOLUTE: old fontconfig silently ignores a relative
+// FONTCONFIG_FILE and falls back to the (unparseable) system config, which
+// aborts with InitDefaultFont(). Relative $0 happens on `./nw`, and via
+// start.sh's `exec ./nw "$@"`.
+const NW_WRAPPER = '#!/bin/sh\nd="$(cd -- "$(dirname -- "$0")" && pwd)"\nexport FONTCONFIG_FILE="${FONTCONFIG_FILE:-$d/fonts.conf}"\nexec "$d/nw.bin" "$@"\n';
 
 function slugify(name) {
   const s = name.normalize('NFKD').replace(/[^\w\s.-]/g, '').trim()

@@ -249,6 +249,11 @@ function doTestRun(card) {
   p.on('close', (code) => {
     clearTimeout(t);
     if (code !== 0 && code !== null && !/SIGTERM/.test(fatal)) {
+      if (/cannot open display/i.test(fatal)) {
+        setStatus(card, `no working display (DISPLAY=${process.env.DISPLAY || 'unset'}) — run from a desktop session, or under Xvfb on headless machines`, 'error');
+        appendLog(card.id, `test-run exit ${code}: ${fatal.slice(-500)}`);
+        return;
+      }
       const line = (fatal.match(/FATAL:[^\n]*|Check failed[^\n]*/) || [])[0] || `exit ${code}`;
       setStatus(card, `crashed: ${line}`, 'error');
     } else setStatus(card, 'launched OK (exited)', 'done');

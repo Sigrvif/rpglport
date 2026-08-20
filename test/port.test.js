@@ -36,8 +36,9 @@ test('slugify', () => {
   assert.equal(slugify('アニマ'), 'rpgl-port-game');                           // never empty
 });
 
-test('buildPort end-to-end on real runtime', { skip: !haveRT }, async () => {
+test('buildPort end-to-end on real runtime', { skip: !haveRT }, async (t) => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'port-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const game = mkMV(base);
   const out = path.join(base, 'out');
   const r = await buildPort({
@@ -75,13 +76,15 @@ test('buildPort end-to-end on real runtime', { skip: !haveRT }, async () => {
   assert.notEqual(nw.substring(0, 4), '\x7fELF');                             // wrapper, not ELF
   assert.match(nw, /nw\.bin/);
   assert.match(nw, /FONTCONFIG_FILE/);
+  assert.match(nw, /&& pwd/);   // d must be absolutized — old fontconfig ignores a relative FONTCONFIG_FILE
   assert.ok(isElf(path.join(port, 'nw.bin')));
   assert.equal(fs.statSync(path.join(port, 'nw.bin')).mode & 0o777, 0o755);
   assert.ok(fs.existsSync(path.join(port, 'fonts.conf')));
 });
 
-test('buildPort on 0.48.4 runtime: no fontconfig workaround', { skip: !haveRT2 }, async () => {
+test('buildPort on 0.48.4 runtime: no fontconfig workaround', { skip: !haveRT2 }, async (t) => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'port-new-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const game = mkMV(base);
   const out = path.join(base, 'out');
   const r = await buildPort({
@@ -100,8 +103,9 @@ test('buildPort on 0.48.4 runtime: no fontconfig workaround', { skip: !haveRT2 }
   assert.ok(!fs.existsSync(path.join(port, 'fonts.conf')));
 });
 
-test('buildPort: existing dest refuse/overwrite/newname', { skip: !haveRT }, async () => {
+test('buildPort: existing dest refuse/overwrite/newname', { skip: !haveRT }, async (t) => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'port2-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const game = mkMV(base);
   const out = path.join(base, 'out');
   const baseOpts = () => ({ gameDir: game, info: { engine: 'MV', payloadRoot: path.join(game, 'www') }, scan: { fixes: [], duplicates: [], conflicts: [], missing: [], counts: { fixes: 0, warnings: 0 } }, runtimeDir: RT, outParent: out, dirName: 'G', onExists: 'refuse' });
@@ -113,8 +117,9 @@ test('buildPort: existing dest refuse/overwrite/newname', { skip: !haveRT }, asy
   assert.match(path.basename(nn.finalDir), /^G-2$/);
 });
 
-test('cancel token stops at file boundary and cleans temp dir', { skip: !haveRT }, async () => {
+test('cancel token stops at file boundary and cleans temp dir', { skip: !haveRT }, async (t) => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'port3-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const game = mkMV(base);
   const cancel = { cancelled: false };
   const p = buildPort({ gameDir: game, info: { engine: 'MV', payloadRoot: path.join(game, 'www') }, scan: { fixes: [], duplicates: [], conflicts: [], missing: [], counts: { fixes: 0, warnings: 0 } }, runtimeDir: RT, outParent: path.join(base, 'out'), dirName: 'G', onExists: 'refuse', cancel, onProgress: () => { cancel.cancelled = true; } });
@@ -122,8 +127,9 @@ test('cancel token stops at file boundary and cleans temp dir', { skip: !haveRT 
   assert.equal(fs.readdirSync(path.join(base, 'out')).filter(n => n.startsWith('.tmp-')).length, 0);
 });
 
-test('buildPort MZ layout + duplicate materialization', { skip: !haveRT }, async () => {
+test('buildPort MZ layout + duplicate materialization', { skip: !haveRT }, async (t) => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'port4-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const g = path.join(base, 'MZ_Game');
   fs.mkdirSync(path.join(g, 'img/pictures'), { recursive: true });
   fs.writeFileSync(path.join(g, 'index.html'), '<html></html>');

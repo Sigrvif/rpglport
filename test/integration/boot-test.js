@@ -32,7 +32,10 @@ if(++t>20){w.writeFileSync(MARK,'TIMEOUT scene='+(s?s.constructor.name:'none'));
   try { fs.unlinkSync(marker); } catch {}
   const errLog = fs.openSync(marker + '.stderr.log', 'w');
   return new Promise((resolve) => {
-    const nw = spawn(path.join(portDir, 'nw'), ['--no-sandbox'], { cwd: portDir, stdio: ['ignore', 'ignore', errLog], env: { ...process.env, DISPLAY: win } });
+    // Launch through start.sh — the user-facing path (cd + exec ./nw),
+    // which exercises the wrapper with a RELATIVE $0: old fontconfig ignores
+    // a relative FONTCONFIG_FILE, so this pins the wrapper's absolutization.
+    const nw = spawn(path.join(portDir, 'start.sh'), ['--no-sandbox'], { cwd: portDir, stdio: ['ignore', 'ignore', errLog], env: { ...process.env, DISPLAY: win } });
     const deadline = Date.now() + 90e3;
     const iv = setInterval(() => {
       if (fs.existsSync(marker)) { clearInterval(iv); nw.kill('SIGKILL'); resolve(fs.readFileSync(marker, 'utf8')); }
