@@ -248,11 +248,11 @@ const { spawn } = require('child_process');
 function testAttempt(card, { display, xauthority, viaXvfb, env: baseEnv }) {
   return new Promise((resolve) => {
     const env = baseEnv ? { ...baseEnv } : { ...process.env };
-    let cmd = path.join(card.finalDir, 'nw');
-    let args = ['--no-sandbox'];
+    let cmd = path.join(card.finalDir, 'start.sh');    // the port's own launcher:
+    let args = ['--no-sandbox'];                       // cwd semantics + GDK/fontconfig hardening
     if (viaXvfb) {
       cmd = 'xvfb-run';
-      args = ['-a', path.join(card.finalDir, 'nw'), '--no-sandbox'];
+      args = ['-a', path.join(card.finalDir, 'start.sh'), '--no-sandbox'];
     } else {
       if (display) env.DISPLAY = display;
       if (xauthority) env.XAUTHORITY = xauthority;

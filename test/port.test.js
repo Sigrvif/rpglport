@@ -64,6 +64,7 @@ test('buildPort end-to-end on real runtime', { skip: !haveRT }, async (t) => {
   assert.ok(!fs.existsSync(path.join(port, 'www/img/faces/Actor1.PNG')));
   assert.ok(fs.existsSync(path.join(port, 'start.sh')));
   assert.ok(fs.statSync(path.join(port, 'start.sh')).mode & 0o111);
+  assert.match(fs.readFileSync(path.join(port, 'start.sh'), 'latin1'), /GDK_BACKEND=x11/); // Wayland-poison hardening
   const pkg = JSON.parse(fs.readFileSync(path.join(port, 'package.json'), 'utf8'));
   assert.equal(pkg.main, 'www/index.html');
   assert.equal(pkg['js-flags'], '--expose-gc');
@@ -76,6 +77,7 @@ test('buildPort end-to-end on real runtime', { skip: !haveRT }, async (t) => {
   assert.notEqual(nw.substring(0, 4), '\x7fELF');                             // wrapper, not ELF
   assert.match(nw, /nw\.bin/);
   assert.match(nw, /FONTCONFIG_FILE/);
+  assert.match(nw, /GDK_BACKEND=x11/);   // wrapper hardens too (Test Run / direct ./nw)
   assert.match(nw, /&& pwd/);   // d must be absolutized — old fontconfig ignores a relative FONTCONFIG_FILE
   assert.ok(isElf(path.join(port, 'nw.bin')));
   assert.equal(fs.statSync(path.join(port, 'nw.bin')).mode & 0o777, 0o755);

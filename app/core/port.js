@@ -47,7 +47,7 @@ const FONTCONFIG_CONF = `<?xml version="1.0"?>
 // FONTCONFIG_FILE and falls back to the (unparseable) system config, which
 // aborts with InitDefaultFont(). Relative $0 happens on `./nw`, and via
 // start.sh's `exec ./nw "$@"`.
-const NW_WRAPPER = '#!/bin/sh\nd="$(cd -- "$(dirname -- "$0")" && pwd)"\nexport FONTCONFIG_FILE="${FONTCONFIG_FILE:-$d/fonts.conf}"\nexec "$d/nw.bin" "$@"\n';
+const NW_WRAPPER = '#!/bin/sh\nd="$(cd -- "$(dirname -- "$0")" && pwd)"\nexport FONTCONFIG_FILE="${FONTCONFIG_FILE:-$d/fonts.conf}"\nexport GDK_BACKEND=x11\nexec "$d/nw.bin" "$@"\n';
 
 function slugify(name) {
   const s = name.normalize('NFKD').replace(/[^\w\s.-]/g, '').trim()
@@ -225,7 +225,11 @@ async function buildPort(opts) {
     fs.writeFileSync(path.join(tmp, 'package.json'), JSON.stringify(out, null, 2));
 
     // 5) Launcher + notes.
-    fs.writeFileSync(path.join(tmp, 'start.sh'), '#!/bin/sh\ncd "$(dirname "$0")"\nexec ./nw "$@"\n');
+    // Games are X11 apps: pin GDK_BACKEND so a Wayland-session parent that
+    // exports GDK_BACKEND=wayland (which old-NW GTK lacks entirely — it dies
+    // with "cannot open display" regardless of X credentials) cannot break
+    // the launch. Standard recipe for X11 GTK apps under Wayland sessions.
+    fs.writeFileSync(path.join(tmp, 'start.sh'), '#!/bin/sh\ncd "$(dirname "$0")"\nexport GDK_BACKEND=x11\nexec ./nw "$@"\n');
     fs.chmodSync(path.join(tmp, 'start.sh'), 0o755);
     const lines = [
       'RPGLPort — generated Linux port',

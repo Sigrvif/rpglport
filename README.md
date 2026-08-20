@@ -59,8 +59,9 @@ listing the whole pool; overrides bypass policy but not the MZ floor.
   a `nw` wrapper pinning `FONTCONFIG_FILE` — old NW.js cannot parse modern fontconfig
   and would otherwise die at startup.
 - The game payload minus Windows runtime files (`.exe`, `.dll`, `.pak`, blobs).
-- A normalized `package.json`, a `start.sh` launcher, and `NOTES.txt` listing **every**
-  note, warning, case fix and missing asset.
+- A normalized `package.json`, a `start.sh` launcher (pins `GDK_BACKEND=x11` — games
+  are X11 apps and die under Wayland sessions that export `GDK_BACKEND=wayland`),
+  and `NOTES.txt` listing **every** note, warning, case fix and missing asset.
 
 ## Limitations
 
