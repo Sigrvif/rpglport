@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const BASE = '<test-games-pool>';
 const FIXTURES = [
+  `${BASE}/MV/game-mv-2`,
   `${BASE}/MV/game-mv-3`,
   `${BASE}/MV/game-mv-4`,
   `${BASE}/MV/game-mv-5`,

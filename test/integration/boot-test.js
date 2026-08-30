@@ -81,6 +81,11 @@ async function main() {
       });
       const out = await bootTest(r.finalDir, ':97');
       const v = evaluate(out);
+      // Isolated profile guard: every runtime in the pool must honor
+      // XDG_CONFIG_HOME or the shared-profile poisoning bug returns.
+      const isolated = fs.existsSync(path.join(r.finalDir, '.userdata'));
+      v.ok = v.ok && isolated;
+      if (!isolated) console.error('NO ISOLATED PROFILE (.userdata missing):', path.basename(game));
       console.log(v.ok ? 'PASS' : 'FAIL', path.basename(game), '→', v.scene, '|', v.errors);
       if (!v.ok) { console.error('port dir (kept for debugging until base cleanup):', r.finalDir); failed++; }
     }

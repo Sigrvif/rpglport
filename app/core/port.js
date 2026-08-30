@@ -47,7 +47,12 @@ const FONTCONFIG_CONF = `<?xml version="1.0"?>
 // FONTCONFIG_FILE and falls back to the (unparseable) system config, which
 // aborts with InitDefaultFont(). Relative $0 happens on `./nw`, and via
 // start.sh's `exec ./nw "$@"`.
-const NW_WRAPPER = '#!/bin/sh\nd="$(cd -- "$(dirname -- "$0")" && pwd)"\nexport FONTCONFIG_FILE="${FONTCONFIG_FILE:-$d/fonts.conf}"\nexport GDK_BACKEND=x11\nexport LD_LIBRARY_PATH="$d/lib:$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$d/nw.bin" "$@"\n'; // LD_LIBRARY_PATH: belt-and-braces alongside rpath (portable-bundle practice); lib/ modern, $d root for ≤0.12-era flat .so layout
+const NW_WRAPPER = '#!/bin/sh\nd="$(cd -- "$(dirname -- "$0")" && pwd)"\nexport FONTCONFIG_FILE="${FONTCONFIG_FILE:-$d/fonts.conf}"\nexport GDK_BACKEND=x11\nexport XDG_CONFIG_HOME="$d/.userdata"\nexport LD_LIBRARY_PATH="$d/lib:$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$d/nw.bin" "$@"\n'; // LD_LIBRARY_PATH: belt-and-braces alongside rpath (portable-bundle practice); lib/ modern, $d root for ≤0.12-era flat .so layout
+// XDG_CONFIG_HOME: isolate the Chromium profile inside the port. Empty/JP-only
+// game names all slugify to one key, so every such port would otherwise share
+// ~/.config/<key> — one newer-runtime launch (pool update, re-port, Test Run of
+// another game) poisons it and every older runtime then pops
+// "Profile Error Occurred ... newer version of NW.js" on each start.
 
 function slugify(name) {
   const s = name.normalize('NFKD').replace(/[^\w\s.-]/g, '').trim()
@@ -229,7 +234,7 @@ async function buildPort(opts) {
     // exports GDK_BACKEND=wayland (which old-NW GTK lacks entirely — it dies
     // with "cannot open display" regardless of X credentials) cannot break
     // the launch. Standard recipe for X11 GTK apps under Wayland sessions.
-    fs.writeFileSync(path.join(tmp, 'start.sh'), '#!/bin/sh\nd="$(cd -- "$(dirname "$0")" && pwd)"\nexport GDK_BACKEND=x11\nexport LD_LIBRARY_PATH="$d/lib:$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$d/nw" "$@"\n'); // LD_LIBRARY_PATH: belt-and-braces alongside rpath — don't rely on $ORIGIN alone
+    fs.writeFileSync(path.join(tmp, 'start.sh'), '#!/bin/sh\nd="$(cd -- "$(dirname "$0")" && pwd)"\nexport GDK_BACKEND=x11\nexport XDG_CONFIG_HOME="$d/.userdata"\nexport LD_LIBRARY_PATH="$d/lib:$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$d/nw" "$@"\n'); // LD_LIBRARY_PATH: belt-and-braces alongside rpath — don't rely on $ORIGIN alone; XDG_CONFIG_HOME: port-local profile (see NW_WRAPPER note)
     fs.chmodSync(path.join(tmp, 'start.sh'), 0o755);
     // real credits over the runtime's sample placeholder page (shared ports
     // are public artifacts — attribution should be accurate)
@@ -249,6 +254,7 @@ async function buildPort(opts) {
       '- MV core < 1.6.0 on Chromium 66+: BGM may stay silent until first click',
       '- NW.js ships no H.264/AAC: .m4a-only games have no audio (use .ogg)',
       '- runtime-constructed asset paths cannot be case-checked — run the game once',
+      'profile: isolated in .userdata/ next to start.sh (launch via start.sh so it applies)',
     ];
     fs.writeFileSync(path.join(tmp, 'NOTES.txt'), `${lines.join('\n')}\n`);
 
