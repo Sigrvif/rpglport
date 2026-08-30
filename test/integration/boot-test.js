@@ -17,7 +17,7 @@ const { FIXTURES } = require('../helpers/fixtures');
 // "Uncaught ReferenceError: PluginManagerEx is not defined @ chrome-extension://<id>/www/js/plugins/FloatVariables.js").
 const TOLERATED = [/FPS\.js/, /PluginManagerEx is not defined @ .*plugins\/FloatVariables\.js/];
 
-function bootTest(portDir, win) {
+function bootTest(portDir, win, script = 'start.sh') {
   const idx = fs.existsSync(path.join(portDir, 'www', 'index.html'))
     ? path.join(portDir, 'www', 'index.html') : path.join(portDir, 'index.html');
   const marker = path.join(portDir, '__BOOT__.txt');     // absolute path embedded in the probe — cwd-relative won't do
@@ -35,7 +35,7 @@ if(++t>20){w.writeFileSync(MARK,'TIMEOUT scene='+(s?s.constructor.name:'none'));
     // Launch through start.sh — the user-facing path (cd + exec ./nw),
     // which exercises the wrapper with a RELATIVE $0: old fontconfig ignores
     // a relative FONTCONFIG_FILE, so this pins the wrapper's absolutization.
-    const nw = spawn(path.join(portDir, 'start.sh'), ['--no-sandbox'], { cwd: portDir, stdio: ['ignore', 'ignore', errLog], env: { ...process.env, DISPLAY: win } });
+    const nw = spawn(path.join(portDir, script), ['--no-sandbox'], { cwd: portDir, stdio: ['ignore', 'ignore', errLog], env: { ...process.env, DISPLAY: win } });
     const deadline = Date.now() + 90e3;
     const iv = setInterval(() => {
       if (fs.existsSync(marker)) { clearInterval(iv); nw.kill('SIGKILL'); resolve(fs.readFileSync(marker, 'utf8')); }
@@ -88,6 +88,15 @@ async function main() {
       if (!isolated) console.error('NO ISOLATED PROFILE (.userdata missing):', path.basename(game));
       console.log(v.ok ? 'PASS' : 'FAIL', path.basename(game), '→', v.scene, '|', v.errors);
       if (!v.ok) { console.error('port dir (kept for debugging until base cleanup):', r.finalDir); failed++; }
+      // Variant launchers (multi-language games): boot one variant end-to-end —
+      // start-E.sh → start.sh → wrapper → nw_E hardlink exec chain must work.
+      const firstVariant = fs.readdirSync(r.finalDir).filter(f => /^start-.+\.sh$/.test(f)).sort()[0];
+      if (firstVariant) {
+        const outV = await bootTest(r.finalDir, ':97', firstVariant);
+        const vV = evaluate(outV);
+        console.log(vV.ok ? 'PASS' : 'FAIL', path.basename(game), `[${firstVariant}]`, '→', vV.scene, '|', vV.errors);
+        if (!vV.ok) failed++;
+      }
     }
   } finally {
     xvfb.kill();

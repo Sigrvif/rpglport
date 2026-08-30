@@ -92,10 +92,18 @@ test('buildPort end-to-end on real runtime', { skip: !haveRT }, async (t) => {
   assert.equal(pkg['js-flags'], '--expose-gc');
   assert.match(pkg.name, /^test-game/);
   assert.match(fs.readFileSync(path.join(port, 'NOTES.txt'), 'utf8'), /0\.29\.0/);
-  // extra-exe reporting: identical stub → note; differing exe → warning
-  assert.ok(r.notes.some(n => /Game_C\.exe.*byte-identical/.test(n)));
+  // extra-exe reporting: identical _S stub → variant launcher; differing exe → warning
+  assert.ok(r.notes.some(n => /variant launcher start-C\.sh.*nw_C.*Game_C\.exe/.test(n)));
   assert.ok(r.warnings.some(w => /Setting\.exe.*not ported/.test(w)));
-  assert.match(fs.readFileSync(path.join(port, 'NOTES.txt'), 'utf8'), /Game_C\.exe/);
+  assert.match(fs.readFileSync(path.join(port, 'NOTES.txt'), 'utf8'), /start-C\.sh/);
+  // variant launcher + hardlink: same inode as the real binary, zero disk
+  assert.ok(fs.existsSync(path.join(port, 'start-C.sh')));
+  assert.ok(fs.statSync(path.join(port, 'start-C.sh')).mode & 0o111);
+  assert.match(fs.readFileSync(path.join(port, 'start-C.sh'), 'utf8'), /NW_SUFFIX=_C/);
+  assert.ok(isElf(path.join(port, 'nw_C')));
+  assert.equal(fs.statSync(path.join(port, 'nw_C')).ino, fs.statSync(path.join(port, 'nw.bin')).ino);
+  // old-runtime start.sh must exec the WRAPPER (fontconfig env), never nw_<S> directly
+  assert.doesNotMatch(fs.readFileSync(path.join(port, 'start.sh'), 'latin1'), /nw\$\{?NW_SUFFIX\}?|nw\$NW_SUFFIX/);
   const so = fs.readFileSync(path.join(port, 'lib/libnode.so'));
   assert.ok(so.length > 1000);
   // <0.30 fontconfig gate: nw is a shell wrapper, real ELF moved to nw.bin.

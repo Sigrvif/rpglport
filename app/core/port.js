@@ -47,12 +47,13 @@ const FONTCONFIG_CONF = `<?xml version="1.0"?>
 // FONTCONFIG_FILE and falls back to the (unparseable) system config, which
 // aborts with InitDefaultFont(). Relative $0 happens on `./nw`, and via
 // start.sh's `exec ./nw "$@"`.
-const NW_WRAPPER = '#!/bin/sh\nd="$(cd -- "$(dirname -- "$0")" && pwd)"\nexport FONTCONFIG_FILE="${FONTCONFIG_FILE:-$d/fonts.conf}"\nexport GDK_BACKEND=x11\nexport XDG_CONFIG_HOME="$d/.userdata"\nexport LD_LIBRARY_PATH="$d/lib:$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$d/nw.bin" "$@"\n'; // LD_LIBRARY_PATH: belt-and-braces alongside rpath (portable-bundle practice); lib/ modern, $d root for ≤0.12-era flat .so layout
+const NW_WRAPPER = '#!/bin/sh\nd="$(cd -- "$(dirname -- "$0")" && pwd)"\nexport FONTCONFIG_FILE="${FONTCONFIG_FILE:-$d/fonts.conf}"\nexport GDK_BACKEND=x11\nexport XDG_CONFIG_HOME="$d/.userdata"\nexport LD_LIBRARY_PATH="$d/lib:$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nb="$d/nw.bin"\n[ -n "$NW_SUFFIX" ] && [ -x "$d/nw$NW_SUFFIX" ] && b="$d/nw$NW_SUFFIX"\nexec "$b" "$@"\n'; // LD_LIBRARY_PATH: belt-and-braces alongside rpath (portable-bundle practice); lib/ modern, $d root for ≤0.12-era flat .so layout
 // XDG_CONFIG_HOME: isolate the Chromium profile inside the port. Empty/JP-only
 // game names all slugify to one key, so every such port would otherwise share
 // ~/.config/<key> — one newer-runtime launch (pool update, re-port, Test Run of
 // another game) poisons it and every older runtime then pops
 // "Profile Error Occurred ... newer version of NW.js" on each start.
+// NW_SUFFIX: per-variant entry point — see the variant launchers below.
 
 function slugify(name) {
   const s = name.normalize('NFKD').replace(/[^\w\s.-]/g, '').trim()
@@ -165,11 +166,24 @@ async function buildPort(opts) {
     }
 
     // Extra root executables (multi-language / variant distributions):
-    // identical stubs are branding (this port already covers them); differing
-    // exes are Windows-only and cannot be run by the port — warn, don't hide.
+    // byte-identical stubs WITH a _<suffix> name are the RPG-Maker multi-
+    // language pattern — the game (title-map event script) reads
+    // path.parse(process.execPath).name and switches on the suffix
+    // (verified: exeName.slice(-2) → _E/_C/_T → LANGUAGE). Identical bytes
+    // behave differently purely through the launched name, so the port
+    // mirrors them: hardlink nw_<S> (same inode, zero disk) + start-<S>.sh.
+    // Differing exes are Windows-only tools/variants — warn, don't hide.
+    const variants = [];
     for (const x of info.extraExes || []) {
-      if (x.identical) notes.push(`extra executable ${x.name}: byte-identical to Game.exe (branding stub — covered by this port)`);
-      else warnings.push(`extra executable ${x.name} differs from Game.exe and is not ported (Windows-only tool or variant?)`);
+      const m = x.identical ? x.name.match(/^(.*)_([A-Za-z0-9]{1,8})\.exe$/i) : null;
+      if (m) {
+        const s = m[2];
+        if (!variants.includes(s)) variants.push(s);
+      } else if (x.identical) {
+        notes.push(`extra executable ${x.name}: byte-identical to Game.exe (branding stub — covered by this port)`);
+      } else {
+        warnings.push(`extra executable ${x.name} differs from Game.exe and is not ported (Windows-only tool or variant?)`);
+      }
     }
 
     // 2) Game payload with the case-fix plan applied (renames at copy time).
@@ -242,8 +256,34 @@ async function buildPort(opts) {
     // exports GDK_BACKEND=wayland (which old-NW GTK lacks entirely — it dies
     // with "cannot open display" regardless of X credentials) cannot break
     // the launch. Standard recipe for X11 GTK apps under Wayland sessions.
-    fs.writeFileSync(path.join(tmp, 'start.sh'), '#!/bin/sh\nd="$(cd -- "$(dirname "$0")" && pwd)"\nexport GDK_BACKEND=x11\nexport XDG_CONFIG_HOME="$d/.userdata"\nexport LD_LIBRARY_PATH="$d/lib:$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$d/nw" "$@"\n'); // LD_LIBRARY_PATH: belt-and-braces alongside rpath — don't rely on $ORIGIN alone; XDG_CONFIG_HOME: port-local profile (see NW_WRAPPER note)
+    // Variant selection (NW_SUFFIX) lives in exactly ONE place per era: the
+    // nw wrapper for old runtimes (start.sh must exec the wrapper to get the
+    // fontconfig env — never nw_<S> directly), start.sh itself for modern
+    // runtimes (no wrapper exists).
+    const oldRT = fs.existsSync(path.join(tmp, 'nw.bin'));
+    fs.writeFileSync(path.join(tmp, 'start.sh'), oldRT
+      ? '#!/bin/sh\nd="$(cd -- "$(dirname -- "$0")" && pwd)"\nexport GDK_BACKEND=x11\nexport XDG_CONFIG_HOME="$d/.userdata"\nexport LD_LIBRARY_PATH="$d/lib:$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nexec "$d/nw" "$@"\n'
+      : '#!/bin/sh\nd="$(cd -- "$(dirname -- "$0")" && pwd)"\nexport GDK_BACKEND=x11\nexport XDG_CONFIG_HOME="$d/.userdata"\nexport LD_LIBRARY_PATH="$d/lib:$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nb="$d/nw"\n[ -n "$NW_SUFFIX" ] && [ -x "$d/nw$NW_SUFFIX" ] && b="$d/nw$NW_SUFFIX"\nexec "$b" "$@"\n'); // LD_LIBRARY_PATH: belt-and-braces alongside rpath — don't rely on $ORIGIN alone; XDG_CONFIG_HOME: port-local profile (see NW_WRAPPER note)
     fs.chmodSync(path.join(tmp, 'start.sh'), 0o755);
+
+    // 5b) Variant launchers mirroring the game's extra executables (the
+    // multi-language pattern: execPath suffix selects the language). The
+    // suffixed binary is a HARDLINK of the runtime binary — same inode, no
+    // extra disk — so process.execPath ends in _<suffix> exactly like
+    // Game_<suffix>.exe did on Windows. All env (fontconfig wrapper for old
+    // runtimes, GDK/XDG/LD) still applies: start-<S>.sh re-enters start.sh
+    // with NW_SUFFIX set.
+    const binName = fs.existsSync(path.join(tmp, 'nw.bin')) ? 'nw.bin' : 'nw';
+    for (const s of variants) {
+      try {
+        fs.linkSync(path.join(tmp, binName), path.join(tmp, `nw_${s}`));
+        fs.writeFileSync(path.join(tmp, `start-${s}.sh`), `#!/bin/sh\nd="$(cd -- "$(dirname -- "$0")" && pwd)"\nNW_SUFFIX=_${s} exec "$d/start.sh" "$@"\n`);
+        fs.chmodSync(path.join(tmp, `start-${s}.sh`), 0o755);
+        notes.push(`variant launcher start-${s}.sh: runs the runtime as nw_${s} (mirrors the game's ${info.extraExes.find(x => x.identical && x.name.endsWith('_' + s + '.exe')).name} — needed when the game selects language/variant by executable name)`);
+      } catch (e) {
+        warnings.push(`could not create variant launcher start-${s}.sh (${e.code || e.message}) — hardlinks unsupported on the destination filesystem?`);
+      }
+    }
     // real credits over the runtime's sample placeholder page (shared ports
     // are public artifacts — attribution should be accurate)
     try {
