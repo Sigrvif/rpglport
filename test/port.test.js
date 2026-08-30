@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs'), os = require('os'), path = require('path');
 const { buildPort, slugify } = require('../app/core/port');
+const { analyze } = require('../app/core/detect');
 
 const RT = 'runtimes/nwjs-v0.29.0-linux-x64';  // real runtime from fetch-dev-deps
 const haveRT = fs.existsSync(path.join(RT, 'nw'));
@@ -36,14 +37,32 @@ test('slugify', () => {
   assert.equal(slugify('アニマ'), 'rpgl-port-game');                           // never empty
 });
 
+test('analyze: extra root executables hashed against Game.exe', () => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'det-'));
+  try {
+    const g = mkMV(base);
+    fs.copyFileSync(path.join(g, 'Game.exe'), path.join(g, 'Game_E.exe'));            // branding stub
+    fs.writeFileSync(path.join(g, 'Setting.exe'), Buffer.alloc(32));                  // differing tool
+    const info = analyze(g);
+    const byName = Object.fromEntries(info.extraExes.map(x => [x.name, x.identical]));
+    assert.equal(byName['Game_E.exe'], true);   // byte-identical → covered by the one port
+    assert.equal(byName['Setting.exe'], false); // differs → must warn
+    assert.equal(info.extraExes.length, 2);
+  } finally { fs.rmSync(base, { recursive: true, force: true }); }
+});
+
 test('buildPort end-to-end on real runtime', { skip: !haveRT }, async (t) => {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), 'port-'));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const game = mkMV(base);
+  fs.copyFileSync(path.join(game, 'Game.exe'), path.join(game, 'Game_C.exe'));  // branding stub
   const out = path.join(base, 'out');
   const r = await buildPort({
     gameDir: game,
-    info: { engine: 'MV', payloadRoot: path.join(game, 'www') },
+    info: { engine: 'MV', payloadRoot: path.join(game, 'www'), extraExes: [
+      { name: 'Game_C.exe', identical: true },
+      { name: 'Setting.exe', identical: false },
+    ] },
     scan: { fixes: [{ actual: 'img/faces/Actor1.PNG', ref: 'img/faces/Actor1.png' }], duplicates: [], conflicts: [], missing: [], counts: { fixes: 1, warnings: 0 } },
     runtimeDir: RT,
     outParent: out,
@@ -73,6 +92,10 @@ test('buildPort end-to-end on real runtime', { skip: !haveRT }, async (t) => {
   assert.equal(pkg['js-flags'], '--expose-gc');
   assert.match(pkg.name, /^test-game/);
   assert.match(fs.readFileSync(path.join(port, 'NOTES.txt'), 'utf8'), /0\.29\.0/);
+  // extra-exe reporting: identical stub → note; differing exe → warning
+  assert.ok(r.notes.some(n => /Game_C\.exe.*byte-identical/.test(n)));
+  assert.ok(r.warnings.some(w => /Setting\.exe.*not ported/.test(w)));
+  assert.match(fs.readFileSync(path.join(port, 'NOTES.txt'), 'utf8'), /Game_C\.exe/);
   const so = fs.readFileSync(path.join(port, 'lib/libnode.so'));
   assert.ok(so.length > 1000);
   // <0.30 fontconfig gate: nw is a shell wrapper, real ELF moved to nw.bin.

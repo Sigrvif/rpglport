@@ -3,6 +3,7 @@
 // (confidence ladder), Enigma packed-exe flag. Read-only: never modifies the game.
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const { readPE, nodeStamps, chromeStamps, isEnigmaPacked } = require('./pe');
 const nwmap = require('./nwmap.json');
 
@@ -98,7 +99,29 @@ function analyze(dir) {
   if (!engine) flags.push('not-rpgmaker');
   if (engine && packageJsonPath && !fs.existsSync(packageJsonPath)) flags.push('missing-package-json');
 
-  return { engine: engine, engineVersion, detectedNW, evidence, flags, arch, payloadRoot, packageJsonPath };
+  // Extra root executables (multi-language / variant distributions). Compare
+  // each against the main Game.exe by hash: byte-identical ones are branding
+  // stubs (the single port already covers them); differing ones are Win32
+  // tools or genuine variants the port cannot run — that deserves a warning,
+  // not silence.
+  let extraExes = [];
+  if (engine) {
+    let mainHash = null;
+    try {
+      mainHash = crypto.createHash('md5').update(fs.readFileSync(path.join(dir, 'Game.exe'))).digest('hex');
+    } catch { /* no Game.exe (MZ or app.nw layouts) — nothing to compare */ }
+    if (mainHash) {
+      for (const f of fs.readdirSync(dir)) {
+        if (!/\.exe$/i.test(f) || /^Game\.exe$/i.test(f) || /^nw\.exe$/i.test(f)) continue;
+        try {
+          const h = crypto.createHash('md5').update(fs.readFileSync(path.join(dir, f))).digest('hex');
+          extraExes.push({ name: f, identical: h === mainHash });
+        } catch { /* unreadable — skip */ }
+      }
+    }
+  }
+
+  return { engine: engine, engineVersion, detectedNW, evidence, flags, arch, payloadRoot, packageJsonPath, extraExes };
 }
 
 module.exports = { analyze, layoutOf, cmpVer };

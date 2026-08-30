@@ -164,6 +164,14 @@ async function buildPort(opts) {
       notes.push(`fontconfig workaround: old runtime ${runtimeVersion} cannot parse modern fontconfig; nw wrapper pins FONTCONFIG_FILE to the bundled fonts.conf`);
     }
 
+    // Extra root executables (multi-language / variant distributions):
+    // identical stubs are branding (this port already covers them); differing
+    // exes are Windows-only and cannot be run by the port — warn, don't hide.
+    for (const x of info.extraExes || []) {
+      if (x.identical) notes.push(`extra executable ${x.name}: byte-identical to Game.exe (branding stub — covered by this port)`);
+      else warnings.push(`extra executable ${x.name} differs from Game.exe and is not ported (Windows-only tool or variant?)`);
+    }
+
     // 2) Game payload with the case-fix plan applied (renames at copy time).
     // MV walks the whole game root so root-level extras (readme.txt, save
     // folders, ...) ship too; the plan is payloadRoot-relative, so it applies

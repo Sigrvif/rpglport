@@ -47,7 +47,7 @@ if(++t>20){w.writeFileSync(MARK,'TIMEOUT scene='+(s?s.constructor.name:'none'));
 function evaluate(out) {
   const scene = (out.match(/scene=(\S+)/) || [])[1] || '';
   const errors = (out.match(/errors=(.*)/) || [])[1] || 'unknown';
-  const okScene = scene === 'Scene_Title' || scene === 'Scene_Boot';
+  const okScene = scene === 'Scene_Boot' || /^Scene_Title/.test(scene); // custom title scenes (e.g. Scene_TitleMap) count
   const errs = errors === 'none' ? [] : errors.split('|');
   const okErrors = errs.every(e => TOLERATED.some(re => re.test(e)));
   return { ok: okScene && okErrors, scene, errors };
