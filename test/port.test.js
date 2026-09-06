@@ -116,6 +116,7 @@ test('buildPort end-to-end on real runtime', { skip: !haveRT }, async (t) => {
   assert.match(nw, /GDK_BACKEND=x11/);   // wrapper hardens too (Test Run / direct ./nw)
   assert.match(nw, /XDG_CONFIG_HOME=/);  // port-local profile — no shared-key poisoning
   assert.match(nw, /LD_LIBRARY_PATH=/);  // belt-and-braces alongside rpath
+  assert.match(nw, /--disable-breakpad/); // old breakpad raises SIGSEGV in a child at close — popup fix
   assert.match(nw, /&& pwd/);   // d must be absolutized — old fontconfig ignores a relative FONTCONFIG_FILE
   assert.ok(isElf(path.join(port, 'nw.bin')));
   assert.equal(fs.statSync(path.join(port, 'nw.bin')).mode & 0o777, 0o755);

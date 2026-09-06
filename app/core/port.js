@@ -47,7 +47,12 @@ const FONTCONFIG_CONF = `<?xml version="1.0"?>
 // FONTCONFIG_FILE and falls back to the (unparseable) system config, which
 // aborts with InitDefaultFont(). Relative $0 happens on `./nw`, and via
 // start.sh's `exec ./nw "$@"`.
-const NW_WRAPPER = '#!/bin/sh\nd="$(cd -- "$(dirname -- "$0")" && pwd)"\nexport FONTCONFIG_FILE="${FONTCONFIG_FILE:-$d/fonts.conf}"\nexport GDK_BACKEND=x11\nexport XDG_CONFIG_HOME="$d/.userdata"\nexport LD_LIBRARY_PATH="$d/lib:$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nb="$d/nw.bin"\n[ -n "$NW_SUFFIX" ] && [ -x "$d/nw$NW_SUFFIX" ] && b="$d/nw$NW_SUFFIX"\nexec "$b" "$@"\n'; // LD_LIBRARY_PATH: belt-and-braces alongside rpath (portable-bundle practice); lib/ modern, $d root for ≤0.12-era flat .so layout
+const NW_WRAPPER = '#!/bin/sh\nd="$(cd -- "$(dirname -- "$0")" && pwd)"\nexport FONTCONFIG_FILE="${FONTCONFIG_FILE:-$d/fonts.conf}"\nexport GDK_BACKEND=x11\nexport XDG_CONFIG_HOME="$d/.userdata"\nexport LD_LIBRARY_PATH="$d/lib:$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\nb="$d/nw.bin"\n[ -n "$NW_SUFFIX" ] && [ -x "$d/nw$NW_SUFFIX" ] && b="$d/nw$NW_SUFFIX"\nexec "$b" "$@" --disable-breakpad\n'; // LD_LIBRARY_PATH: belt-and-braces alongside rpath (portable-bundle practice); lib/ modern, $d root for ≤0.12-era flat .so layout
+// --disable-breakpad: old breakpad's shutdown path raises SIGSEGV (si_code
+// SI_TKILL) in a child at window close — the game exits fine, but the system
+// crash reporter pops "nw.bin encountered a fatal error" per close. Verified:
+// 3/3 baseline closes crash ("Failed to tell parent about crash" in stderr),
+// 3/3 clean with the switch; no other behavior change.
 // XDG_CONFIG_HOME: isolate the Chromium profile inside the port. Empty/JP-only
 // game names all slugify to one key, so every such port would otherwise share
 // ~/.config/<key> — one newer-runtime launch (pool update, re-port, Test Run of
@@ -163,6 +168,7 @@ async function buildPort(opts) {
       fs.writeFileSync(path.join(tmp, 'nw'), NW_WRAPPER);
       fs.chmodSync(path.join(tmp, 'nw'), 0o755);
       notes.push(`fontconfig workaround: old runtime ${runtimeVersion} cannot parse modern fontconfig; nw wrapper pins FONTCONFIG_FILE to the bundled fonts.conf`);
+      notes.push('breakpad disabled: old crash handler raises SIGSEGV in a child at exit (harmless to the game, but every close popped a system crash-reporter notice)');
     }
 
     // 1c) Legacy lib set for runtimes < 0.29 (GTK2/Chromium-41 era): they hard-
