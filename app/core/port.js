@@ -165,6 +165,32 @@ async function buildPort(opts) {
       notes.push(`fontconfig workaround: old runtime ${runtimeVersion} cannot parse modern fontconfig; nw wrapper pins FONTCONFIG_FILE to the bundled fonts.conf`);
     }
 
+    // 1c) Legacy lib set for runtimes < 0.29 (GTK2/Chromium-41 era): they hard-
+    // link libgconf-2.so.4, libgtk-x11-2.0.so.0, libgdk-x11-2.0.so.0 and (≤0.12)
+    // libnotify.so.4, with libdbus-glib-1 for gconf — every one dropped by
+    // modern distros. Vendored Debian buster builds (glibc 2.28 = documented
+    // floor), closure verified by ldd against the pool's 0.12.3/0.19.5/0.22.3.
+    // They land in the port root, which every launcher's LD_LIBRARY_PATH covers.
+    if (cmpVer(runtimeVersion, '0.29.0') < 0) {
+      const compatDir = path.join(__dirname, '..', 'compat', 'legacy-libs');
+      if (fs.existsSync(compatDir)) {
+        for (const f of fs.readdirSync(compatDir)) {
+          const src = path.join(compatDir, f);
+          if (f.startsWith('copyright-')) {
+            fs.mkdirSync(path.join(tmp, 'licenses', 'legacy-libs'), { recursive: true });
+            fs.copyFileSync(src, path.join(tmp, 'licenses', 'legacy-libs', f));
+          } else if (fs.lstatSync(src).isSymbolicLink()) {
+            fs.symlinkSync(fs.readlinkSync(src), path.join(tmp, f));
+          } else {
+            fs.copyFileSync(src, path.join(tmp, f));
+          }
+        }
+        notes.push('legacy libs bundled: GTK2-era set (libgconf-2, libgtk-x11-2.0, libgdk-x11-2.0, libnotify.so.4, libdbus-glib-1) — dropped by modern distros, required by runtimes < 0.29 (licenses in licenses/legacy-libs)');
+      } else {
+        warnings.push('legacy lib set missing (app/compat/legacy-libs) — this old runtime will fail to load on modern distros without libgconf/GTK2');
+      }
+    }
+
     // Extra root executables (multi-language / variant distributions):
     // byte-identical stubs WITH a _<suffix> name are the RPG-Maker multi-
     // language pattern — the game (title-map event script) reads

@@ -21,8 +21,10 @@ unpacker) ships inside the bundle.
 Works on any reasonably current x86-64 Linux distro (Arch, Debian, Ubuntu, Fedora…):
 the bundled NW.js runtimes need glibc ≥ 2.25 (2017-era; everything since Debian 10 /
 Ubuntu 18.04 qualifies) and the standard GTK/X11 stack that desktop systems already
-have. On a **minimal or server install** (Debian/Ubuntu without a desktop), install
-the runtime libraries first:
+have. Ports of games pinned to old NW.js (< 0.29) bundle their own GTK2-era library
+set (libgconf-2, libgtk-x11-2.0, libgdk-x11-2.0, libnotify, libdbus-glib) in the
+port folder, so those need nothing extra either. On a **minimal or server install**
+(Debian/Ubuntu without a desktop), install the runtime libraries first:
 
 ```sh
 # Debian / Ubuntu

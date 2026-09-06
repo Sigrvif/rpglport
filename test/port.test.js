@@ -6,6 +6,8 @@ const { buildPort, slugify } = require('../app/core/port');
 const { analyze } = require('../app/core/detect');
 
 const RT = 'runtimes/nwjs-v0.29.0-linux-x64';  // real runtime from fetch-dev-deps
+const RT3 = 'runtimes/nwjs-v0.12.3-linux-x64'; // oldest runtime: legacy-lib era
+const haveRT3 = fs.existsSync(path.join(RT3, 'nw'));
 const haveRT = fs.existsSync(path.join(RT, 'nw'));
 const RT2 = 'runtimes/nwjs-v0.48.4-linux-x64'; // modern runtime: no fontconfig workaround
 const haveRT2 = fs.existsSync(path.join(RT2, 'nw'));
@@ -118,6 +120,34 @@ test('buildPort end-to-end on real runtime', { skip: !haveRT }, async (t) => {
   assert.ok(isElf(path.join(port, 'nw.bin')));
   assert.equal(fs.statSync(path.join(port, 'nw.bin')).mode & 0o777, 0o755);
   assert.ok(fs.existsSync(path.join(port, 'fonts.conf')));
+  // 0.29.0 is clean of legacy needs — no GTK2-era bundle
+  assert.ok(!fs.existsSync(path.join(port, 'libgconf-2.so.4')));
+});
+
+test('buildPort on 0.12.3 runtime: legacy GTK2-era lib set bundled', { skip: !haveRT3 }, async (t) => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'port-legacy-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const game = mkMV(base);
+  const out = path.join(base, 'out');
+  const r = await buildPort({
+    gameDir: game,
+    info: { engine: 'MV', payloadRoot: path.join(game, 'www') },
+    scan: { fixes: [], duplicates: [], conflicts: [], missing: [], counts: { fixes: 0, warnings: 0 } },
+    runtimeDir: RT3,
+    runtimeVersion: '0.12.3',
+    outParent: out,
+    dirName: 'Legacy Game (Linux)',
+    onExists: 'refuse',
+  });
+  const port = r.finalDir;
+  // the four hard-linked legacy libs + gconf's dbus-glib, in the port root
+  // where LD_LIBRARY_PATH already points; soname links must resolve
+  for (const so of ['libgconf-2.so.4', 'libgtk-x11-2.0.so.0', 'libgdk-x11-2.0.so.0', 'libnotify.so.4', 'libdbus-glib-1.so.2']) {
+    assert.ok(fs.existsSync(path.join(port, so)), so);
+  }
+  // attribution ships with the binaries (ports are public artifacts)
+  assert.ok(fs.readdirSync(path.join(port, 'licenses', 'legacy-libs')).length >= 4);
+  assert.ok(r.notes.some(n => /legacy libs bundled/.test(n)));
 });
 
 test('buildPort on 0.48.4 runtime: no fontconfig workaround', { skip: !haveRT2 }, async (t) => {
