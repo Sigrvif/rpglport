@@ -171,6 +171,34 @@ function scan(payloadRoot) {
   // One missing entry per base: the most-referenced casing across ALL of that
   // base's probed candidates (first-seen wins ties, matching probe order).
   for (const [base, agg] of missingByBase) {
+    if (!diskBases.has(base)) continue;                                  // sibling on disk → not missing
+    // Encrypted-asset case fix (base has a sibling on disk): MV's Decrypter
+    // swaps extensions at load time (.png→.rpgmvp, .ogg→.rpgmvo, .m4a→.rpgmvm)
+    // but references always carry the PLAIN extension, so the exact-match fix
+    // above never sees these. Windows loaded them through its case-insensitive
+    // open; on Linux the Decrypter's lookup is case-sensitive, so the encrypted
+    // file must carry the referenced casing.
+    const enc = files.get(base + '.rpgmvp') ? '.rpgmvp'
+      : files.get(base + '.rpgmvo') ? '.rpgmvo'
+      : files.get(base + '.rpgmvm') ? '.rpgmvm' : null;
+    if (!enc) continue;
+    const encDisk = files.get(base + enc);
+    if (encDisk.length !== 1) { conflicts.push({ files: encDisk }); continue; }
+    // stems as referenced (extension stripped), most-referenced wins; ties → keep disk casing
+    const stems = new Map();
+    for (const [w, n] of agg) {
+      const stem = w.slice(0, w.lastIndexOf('.'));
+      stems.set(stem, (stems.get(stem) || 0) + n);
+    }
+    const ranked = [...stems.entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
+    const tied = ranked.length > 1 && ranked[0][1] === ranked[1][1];
+    const diskStem = encDisk[0].slice(0, encDisk[0].length - enc.length);
+    const canonical = (tied ? diskStem : ranked[0][0]) + enc;
+    if (canonical !== encDisk[0]) fixes.push({ actual: encDisk[0], ref: canonical });
+    for (const s of stems.keys()) if (s + enc !== canonical) duplicates.push({ target: canonical, as: s + enc });
+    continue;
+  }
+  for (const [base, agg] of missingByBase) {
     if (diskBases.has(base)) continue;                                  // sibling on disk → not missing
     let best = null, bestN = -1;
     for (const [c, n] of agg) if (n > bestN) { best = c; bestN = n; }

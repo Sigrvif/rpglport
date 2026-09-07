@@ -27,6 +27,36 @@ test('unique wrong-case ref → rename fix', () => {
   assert.equal(r.counts.fixes, 1);
 });
 
+test('encrypted variant (rpgmvp/rpgmvo/rpgmvm) case fix: refs carry the plain extension', () => {
+  // MV Decrypter swaps .png→.rpgmvp at load time; Windows loaded it through the
+  // case-insensitive open, so encrypted games ship any casing they like.
+  const root = mkGame({
+    'img/characters/$heroine_Petoria.rpgmvp': 'x',                  // disk: capital P
+    'audio/bgm/Theme.MP3.rpgmvo': 'x',                              // mp3 never swapped — sibling-only base
+    'data/Actors.json': JSON.stringify([{ characterName: '$heroine_petoria' }]), // ref: lowercase
+  });
+  const r = scan(root);
+  assert.deepEqual(r.fixes, [{ actual: 'img/characters/$heroine_Petoria.rpgmvp', ref: 'img/characters/$heroine_petoria.rpgmvp' }]);
+  assert.equal(r.duplicates.length, 0);
+  assert.equal(r.missing.length, 0);                                // not missing — sibling exists
+});
+
+test('encrypted variant: already-referenced casing → no fix; multiple stems → duplicate', () => {
+  const ok = mkGame({
+    'img/characters/$heroine_petoria.rpgmvp': 'x',
+    'data/Actors.json': JSON.stringify([{ characterName: '$heroine_petoria' }]),
+  });
+  let r = scan(ok);
+  assert.deepEqual(r.fixes, []);
+  const multi = mkGame({
+    'img/characters/$heroine_Petoria.rpgmvp': 'x',
+    'data/a.json': JSON.stringify([{ characterName: '$heroine_petoria' }, { characterName: '$heroine_petoria' }, { characterName: '$heroine_Petoria' }]),
+  });
+  r = scan(multi);
+  assert.deepEqual(r.fixes, [{ actual: 'img/characters/$heroine_Petoria.rpgmvp', ref: 'img/characters/$heroine_petoria.rpgmvp' }]);
+  assert.deepEqual(r.duplicates, [{ target: 'img/characters/$heroine_petoria.rpgmvp', as: 'img/characters/$heroine_Petoria.rpgmvp' }]);
+});
+
 test('majority casing wins, minority materialized; tie keeps disk casing', () => {
   // Refs live in data/*.json — the key-table collector only walks data/ and js/.
   const root = mkGame({
