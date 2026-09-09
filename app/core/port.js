@@ -9,17 +9,23 @@ const { destIsCaseInsensitive } = require('./casescan');
 const { cmpVer } = require('./detect');
 
 const SKIP_EXACT = new Set([
-  'game.exe', 'nw.exe', 'game.bin', 'notification_helper.exe', 'icudtl.dat',
-  'natives_blob.bin', 'snapshot_blob.bin', 'v8_context_snapshot.bin',
+  'icudtl.dat', 'natives_blob.bin', 'snapshot_blob.bin', 'v8_context_snapshot.bin',
   'credits.html', 'debug.log',
 ]);
 const SKIP_DIRS = new Set(['locales', 'swiftshader']);
 
-// Windows-only leftovers of a shipped game have no business in the Linux port.
+// Only names that COLLIDE with the Linux runtime's own files are skipped —
+// those must stay the Linux build's (icudtl.dat/V8 snapshots/paks are
+// version-locked to the bundled Chromium). Original Windows runtime files
+// (*.dll, Game.exe, launcher stubs) are deliberately SHIPPED as inert data:
+// games with launcher-integrity DRM hash-check them from their core scripts
+// and silently self-exit when they are missing or differ (verified: game-mz-3
+// hashed libGLESv2.dll and process.exit()ed on mismatch). Their presence
+// makes such checks pass legitimately; they are never executed on Linux.
 function isWinRuntime(name, isDir) {
   const n = name.toLowerCase();
   if (isDir) return SKIP_DIRS.has(n);
-  return SKIP_EXACT.has(n) || n.endsWith('.dll') || n.endsWith('.pak');
+  return SKIP_EXACT.has(n) || n.endsWith('.pak');
 }
 
 // Pre-0.30 NW.js bundles an ancient fontconfig that cannot parse modern
@@ -214,7 +220,7 @@ async function buildPort(opts) {
       } else if (x.identical) {
         notes.push(`extra executable ${x.name}: byte-identical to Game.exe (branding stub — covered by this port)`);
       } else {
-        warnings.push(`extra executable ${x.name} differs from Game.exe and is not ported (Windows-only tool or variant?)`);
+        warnings.push(`extra executable ${x.name} differs from Game.exe — shipped as inert data (Windows-only, not runnable here)`);
       }
     }
 
@@ -270,9 +276,11 @@ async function buildPort(opts) {
 
     // 3b) Launcher-integrity DRM detector: some games hash-check files of the
     // ORIGINAL Windows runtime (or of Game.exe) from their core manager
-    // scripts and silently process.exit() when the port's runtime differs —
-    // the port can never satisfy such a check. Core scripts never legitimately
-    // call process.exit, so its presence there is a strong, cheap signal.
+    // scripts and silently process.exit() when the check fails. Core scripts
+    // never legitimately call process.exit, so its presence there is a strong,
+    // cheap signal. The original runtime files are shipped (see isWinRuntime),
+    // which makes such checks pass on Linux; the note documents why they are
+    // there in case a check targets something exotic we cannot anticipate.
     const coreScripts = info.engine === 'MZ'
       ? ['js/rmmz_core.js', 'js/rmmz_managers.js', 'js/rmmz_objects.js', 'js/rmmz_scenes.js']
       : ['www/js/rpg_core.js', 'www/js/rpg_managers.js', 'www/js/rpg_objects.js', 'www/js/rpg_scenes.js'];
@@ -280,7 +288,7 @@ async function buildPort(opts) {
       const f = path.join(tmp, rel);
       try {
         if (fs.readFileSync(f, 'utf8').includes('process.exit')) {
-          warnings.push(`possible launcher-integrity DRM: ${rel} calls process.exit() — the game may exit silently at startup when the port's runtime fails its self-check (the original Windows files it verifies are not part of a Linux port)`);
+          notes.push(`launcher-integrity self-check detected (${rel} calls process.exit): the original Windows runtime files are bundled at the port root so the check passes on Linux — do not delete them`);
           break;
         }
       } catch { /* absent */ }

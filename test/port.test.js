@@ -74,8 +74,11 @@ test('buildPort end-to-end on real runtime', { skip: !haveRT }, async (t) => {
   const port = r.finalDir;
   assert.ok(fs.existsSync(path.join(port, 'nw')));
   assert.ok(fs.statSync(path.join(port, 'nw')).mode & 0o111);
-  assert.ok(!fs.existsSync(path.join(port, 'Game.exe')));
-  assert.ok(!fs.existsSync(path.join(port, 'node.dll')));
+  // original Windows runtime files ship as inert data — launcher-integrity
+  // DRM hash-checks them; they must be present with ORIGINAL bytes
+  assert.ok(fs.existsSync(path.join(port, 'Game.exe')));
+  assert.ok(fs.existsSync(path.join(port, 'node.dll')));
+  assert.ok(fs.existsSync(path.join(port, 'www/index.html')));
   assert.ok(fs.existsSync(path.join(port, 'icudtl.dat')));                     // runtime's own, required
   assert.ok(fs.existsSync(path.join(port, 'locales')));                        // full-fidelity runtime copy
   assert.ok(fs.existsSync(path.join(port, 'readme.txt')));                     // MV game-root extra
@@ -96,7 +99,7 @@ test('buildPort end-to-end on real runtime', { skip: !haveRT }, async (t) => {
   assert.match(fs.readFileSync(path.join(port, 'NOTES.txt'), 'utf8'), /0\.29\.0/);
   // extra-exe reporting: identical _S stub → variant launcher; differing exe → warning
   assert.ok(r.notes.some(n => /variant launcher start-C\.sh.*nw_C.*Game_C\.exe/.test(n)));
-  assert.ok(r.warnings.some(w => /Setting\.exe.*not ported/.test(w)));
+  assert.ok(r.warnings.some(w => /Setting\.exe.*inert data/.test(w)));
   assert.match(fs.readFileSync(path.join(port, 'NOTES.txt'), 'utf8'), /start-C\.sh/);
   // variant launcher + hardlink: same inode as the real binary, zero disk
   assert.ok(fs.existsSync(path.join(port, 'start-C.sh')));
@@ -125,8 +128,28 @@ test('buildPort end-to-end on real runtime', { skip: !haveRT }, async (t) => {
   assert.ok(!fs.existsSync(path.join(port, 'libgconf-2.so.4')));
 });
 
-test('buildPort on 0.12.3 runtime: legacy GTK2-era lib set bundled', { skip: !haveRT3 }, async (t) => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'port-legacy-'));
+test('launcher-integrity self-check → note (original runtime files shipped)', { skip: !haveRT }, async (t) => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'port-drm-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const game = mkMV(base);
+  fs.mkdirSync(path.join(game, 'www/js'), { recursive: true });
+  fs.appendFileSync(path.join(game, 'www/js/rpg_managers.js'), '\nif (bad) process.exit();\n');
+  const out = path.join(base, 'out');
+  const r = await buildPort({
+    gameDir: game,
+    info: { engine: 'MV', payloadRoot: path.join(game, 'www') },
+    scan: { fixes: [], duplicates: [], conflicts: [], missing: [], counts: { fixes: 0, warnings: 0 } },
+    runtimeDir: RT,
+    runtimeVersion: '0.29.0',
+    outParent: out,
+    dirName: 'DRM Game (Linux)',
+    onExists: 'refuse',
+  });
+  assert.ok(r.notes.some(n => /launcher-integrity self-check/.test(n)));
+  assert.ok(!r.warnings.some(w => /launcher-integrity/.test(w)));
+});
+
+test('buildPort on 0.12.3 runtime: legacy GTK2-era lib set bundled', { skip: !haveRT3 }, async (t) => {  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'port-legacy-'));
   t.after(() => fs.rmSync(base, { recursive: true, force: true }));
   const game = mkMV(base);
   const out = path.join(base, 'out');
