@@ -2,7 +2,8 @@
 /* RPGLPort GUI — thin layer over app/core (NW.js: Node available in page). */
 const path = require('path');
 const fs = require('fs');
-const { shell } = require('nw.gui');
+const gui = require('nw.gui');
+const Shell = gui.Shell;                    // NW exposes Shell (capital) — not lowercase like Electron
 const { analyzeInput, portCard, PortQueue, selftest, findLiveDisplays, hasXvfbRun, findProcDisplayPairs, xauthorityCandidates, findSessionEnvs } = require('./core/engine');
 const { listPool, choose } = require('./core/select');
 const settings = require('./core/settings');
@@ -172,8 +173,13 @@ function renderCard(card) {
   el.querySelector('.bOpen').onclick = () => {
     if (!card.finalDir) return;
     appendLog(card.id, `revealing in file manager: ${card.finalDir}`);
-    try { shell.showItemInFolder(card.finalDir); }
-    catch (e) { appendLog(card.id, `file manager reveal failed: ${e.message} — the folder is at ${card.finalDir}`); }
+    try { Shell.showItemInFolder(card.finalDir); }
+    catch (e) {
+      appendLog(card.id, `Shell reveal failed (${e.message}) — falling back to xdg-open`);
+      try {
+        spawn('xdg-open', [card.finalDir], { detached: true, stdio: 'ignore' }).unref();
+      } catch (e2) { appendLog(card.id, `xdg-open failed too: ${e2.message} — the folder is at ${card.finalDir}`); }
+    }
   };
   el.querySelector('.bTest').onclick = () => doTestRun(card);
 }
