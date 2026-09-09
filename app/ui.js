@@ -272,8 +272,9 @@ function testAttempt(card, { display, xauthority, viaXvfb, env: baseEnv }) {
     const t = setTimeout(() => { p.kill('SIGTERM'); resolve({ kind: 'ok', viaXvfb }); }, 8000);
     p.on('close', (code, signal) => {
       clearTimeout(t);
-      if (signal === 'SIGTERM' || code === 0 || code === null) resolve({ kind: 'ok', viaXvfb });
+      if (signal === 'SIGTERM') resolve({ kind: 'ok', viaXvfb });        // our 8s timer — alive the whole window
       else if (/cannot open display/i.test(fatal)) resolve({ kind: 'no-display', fatal, code });
+      else if (code === 0 || code === null) resolve({ kind: 'exited-early', fatal, code }); // self-exit ≠ launched (e.g. launcher-integrity DRM)
       else resolve({ kind: 'crashed', fatal, code });
     });
   });
@@ -290,6 +291,11 @@ async function doTestRun(card) {
   let r = await testAttempt(card, {});
   if (r.kind === 'ok') return setStatus(card, 'launched OK (no early crash)', 'done');
   if (r.kind === 'error') return setStatus(card, `test run failed: ${r.msg}`, 'error');
+  if (r.kind === 'exited-early') {
+    setStatus(card, `the game exited by itself right after launch (code ${r.code ?? 0}) — see NOTES.txt: possible launcher-integrity check`, 'error');
+    appendLog(card.id, `test-run early self-exit ${r.code}: ${r.fatal.slice(-500)}`);
+    return;
+  }
   if (r.kind === 'crashed') {
     const line = (r.fatal.match(/FATAL:[^\n]*|Check failed[^\n]*/) || [])[0] || `exit ${r.code}`;
     setStatus(card, `crashed: ${line}`, 'error');
@@ -318,6 +324,11 @@ async function doTestRun(card) {
       const line = (r.fatal.match(/FATAL:[^\n]*|Check failed[^\n]*/) || [])[0] || `exit ${r.code}`;
       setStatus(card, `crashed: ${line}`, 'error');
       appendLog(card.id, `test-run exit ${r.code}: ${r.fatal.slice(-500)}`);
+      return;
+    }
+    if (r.kind === 'exited-early') {
+      setStatus(card, `the game exited by itself right after launch (code ${r.code ?? 0}) — see NOTES.txt: possible launcher-integrity check`, 'error');
+      appendLog(card.id, `test-run early self-exit ${r.code}: ${r.fatal.slice(-500)}`);
       return;
     }
     if (r.kind === 'error') return setStatus(card, `test run failed: ${r.msg}`, 'error');
@@ -351,6 +362,11 @@ async function doTestRun(card) {
       const line = (r.fatal.match(/FATAL:[^\n]*|Check failed[^\n]*/) || [])[0] || `exit ${r.code}`;
       setStatus(card, `crashed: ${line}`, 'error');
       appendLog(card.id, `test-run exit ${r.code}: ${r.fatal.slice(-500)}`);
+      return;
+    }
+    if (r.kind === 'exited-early') {
+      setStatus(card, `the game exited by itself right after launch (code ${r.code ?? 0}) — see NOTES.txt: possible launcher-integrity check`, 'error');
+      appendLog(card.id, `test-run early self-exit ${r.code}: ${r.fatal.slice(-500)}`);
       return;
     }
     if (r.kind === 'error') return setStatus(card, `test run failed: ${r.msg}`, 'error');

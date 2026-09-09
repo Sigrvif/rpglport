@@ -268,6 +268,24 @@ async function buildPort(opts) {
       notes.push(`materialized duplicate casing: ${d.as}`);
     }
 
+    // 3b) Launcher-integrity DRM detector: some games hash-check files of the
+    // ORIGINAL Windows runtime (or of Game.exe) from their core manager
+    // scripts and silently process.exit() when the port's runtime differs —
+    // the port can never satisfy such a check. Core scripts never legitimately
+    // call process.exit, so its presence there is a strong, cheap signal.
+    const coreScripts = info.engine === 'MZ'
+      ? ['js/rmmz_core.js', 'js/rmmz_managers.js', 'js/rmmz_objects.js', 'js/rmmz_scenes.js']
+      : ['www/js/rpg_core.js', 'www/js/rpg_managers.js', 'www/js/rpg_objects.js', 'www/js/rpg_scenes.js'];
+    for (const rel of coreScripts) {
+      const f = path.join(tmp, rel);
+      try {
+        if (fs.readFileSync(f, 'utf8').includes('process.exit')) {
+          warnings.push(`possible launcher-integrity DRM: ${rel} calls process.exit() — the game may exit silently at startup when the port's runtime fails its self-check (the original Windows files it verifies are not part of a Linux port)`);
+          break;
+        }
+      } catch { /* absent */ }
+    }
+
     // 4) Normalized package.json.
     let pkg = null;
     try { pkg = JSON.parse(fs.readFileSync(path.join(gameDir, 'package.json'), 'utf8')); }
