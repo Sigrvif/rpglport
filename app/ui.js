@@ -169,7 +169,12 @@ function renderCard(card) {
     state.cards.delete(card.id); el.remove();
   };
   el.querySelector('.bPort').onclick = () => doPort(card);   // doPort does its own queue.enqueue — wrapping it in enqueue deadlocks
-  el.querySelector('.bOpen').onclick = () => card.finalDir && shell.showItemInFolder(card.finalDir);
+  el.querySelector('.bOpen').onclick = () => {
+    if (!card.finalDir) return;
+    appendLog(card.id, `revealing in file manager: ${card.finalDir}`);
+    try { shell.showItemInFolder(card.finalDir); }
+    catch (e) { appendLog(card.id, `file manager reveal failed: ${e.message} — the folder is at ${card.finalDir}`); }
+  };
   el.querySelector('.bTest').onclick = () => doTestRun(card);
 }
 
