@@ -34,7 +34,7 @@ rm -rf _host && mkdir -p _host
 tar -xzf "$CACHE/host-nwjs.tar.gz" -C _host --strip-components=1
 
 # 4. Ladder runtimes (same list as build.sh)
-LADDER="0.12.3 0.19.5 0.22.3 0.29.0 0.48.4"
+LADDER="0.12.3 0.19.5 0.22.3 0.29.0 0.39.3 0.48.4"
 for v in $LADDER; do
   if [ -d "runtimes/nwjs-v${v}-linux-x64" ]; then continue; fi
   # reuse pre-extracted cache dirs when available (e.g. /tmp/kilo/nwjs-v0.29.0-linux-x64)

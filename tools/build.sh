@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ARCH="${1:-x64}"
-LADDER="0.12.3 0.19.5 0.22.3 0.29.0 0.48.4"
+LADDER="0.12.3 0.19.5 0.22.3 0.29.0 0.39.3 0.48.4"
 WORK="dist/build"
 OUT="dist/RPGLPort"
 rm -rf "$WORK" "$OUT" && mkdir -p "$WORK" "$OUT" dist
