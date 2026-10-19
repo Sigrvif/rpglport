@@ -128,6 +128,7 @@ function renderCard(card) {
       <button class="bPort" ${isErr ? 'hidden' : ''}>Port</button>
       <button class="bOpen" hidden>Open</button>
       <button class="bTest" hidden>Test run</button>
+      <button class="bDiag" hidden>Diag play</button>
       <button class="bLog">Log</button>
       <button class="bRemove">Remove</button>
     </div>
@@ -184,6 +185,7 @@ function renderCard(card) {
     }
   };
   el.querySelector('.bTest').onclick = () => doTestRun(card);
+  el.querySelector('.bDiag').onclick = () => doDiagRun(card);
 }
 
 async function addInputs(paths) {
@@ -227,6 +229,7 @@ async function doPort(card) {
     setStatus(card, `done — ${scan.counts.fixes} case fixes · ${m} warnings`, m ? 'warn' : 'done');
     card.el.querySelector('.bOpen').hidden = false;
     card.el.querySelector('.bTest').hidden = false;
+    card.el.querySelector('.bDiag').hidden = false;
     appendLog(card.id, `ported → ${r.finalDir}`);
     for (const w of r.warnings) appendLog(card.id, `warning: ${w}`);
     // spec §4: cleaned unless the user keeps extracted copies (folders have no extractDir)
@@ -271,10 +274,14 @@ function testAttempt(card, { display, xauthority, viaXvfb, env: baseEnv }) {
   return new Promise((resolve) => {
     const env = baseEnv ? { ...baseEnv } : { ...process.env };
     let cmd = path.join(card.finalDir, 'start.sh');    // the port's own launcher:
-    let args = ['--no-sandbox'];                       // cwd semantics + GDK/fontconfig hardening
+    // --no-sandbox: cwd semantics + GDK/fontconfig hardening. The three
+    // backgrounding flags: Chromium throttles rAF for occluded/unfocused
+    // windows — the game opens BEHIND RPGLPort during a test — which
+    // fake-freezes the page and corrupts the frame-time diagnostic.
+    let args = ['--no-sandbox', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'];
     if (viaXvfb) {
       cmd = 'xvfb-run';
-      args = ['-a', path.join(card.finalDir, 'start.sh'), '--no-sandbox'];
+      args = ['-a', path.join(card.finalDir, 'start.sh'), ...args];
     } else {
       if (display) env.DISPLAY = display;
       if (xauthority) env.XAUTHORITY = xauthority;
@@ -318,16 +325,25 @@ function injectDiagProbe(card) {
   try { orig = fs.readFileSync(idx, 'utf8'); } catch { return null; }
   const PROBE = '<script>(function(){try{var fs=require("fs"),MARK=' + JSON.stringify(marker) + ';' +
     'function w(s){try{fs.writeFileSync(MARK,s)}catch(e){}}' +
-    'function st(d){var b=d.slice().sort(function(x,y){return x-y});return [Math.round(b[b.length>>1]||0),Math.round(b[b.length-1]||0)];}' +
-    'var gl=null;try{var c=document.createElement("canvas");gl=c.getContext("webgl")||c.getContext("experimental-webgl")}catch(e){}' +
-    'var r="webgl-unavailable";' +
-    'if(gl){var dbg=gl.getExtension("WEBGL_debug_renderer_info");r=String((dbg&&gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL))||gl.getParameter(gl.RENDERER)||"webgl-unknown").replace(/[\\n\\r]+/g," ");}' +
-    'var scene="none",n=0,t0=0,d=[],_oe=window.onerror;' +
-    'window.onerror=function(m){w("scene="+scene+"\\nrenderer="+r+"\\nframes="+d.length+" med="+st(d)[0]+" max="+st(d)[1]+"\\nerror="+String(m).slice(0,200));if(_oe)return _oe.apply(this,arguments);};' +
-    'function flush(){w("scene="+scene+"\\nrenderer="+r+"\\nframes="+d.length+" med="+st(d)[0]+" max="+st(d)[1]);}' +
-    'requestAnimationFrame(function f(t){if(t0!==0)d.push(t-t0);t0=t;' +
+    'function st(a){var b=a.slice().sort(function(x,y){return x-y});return [Math.round(b[b.length>>1]||0),Math.round(b[b.length-1]||0)];}' +
+    'var scene="none",r="not-read-yet",n=0,t0=0,t00=0,tN=0,d=[],sc=0,_oe=window.onerror;' +
+    // The renderer string must come from the GAME's own GL context
+    // (Graphics._renderer.gl). A probe-owned WebGL context wedges the
+    // compositor frame pump on some stacks (measured: healthy 60fps
+    // collapses to a burst + starvation with 0ms deltas) — never make one.
+    'function readR(){if(r!=="not-read-yet")return;' +
+    'try{var g=window.Graphics&&Graphics._renderer&&Graphics._renderer.gl;if(!g)return;' +
+    'var dbg=g.getExtension("WEBGL_debug_renderer_info");' +
+    'r=String((dbg&&g.getParameter(dbg.UNMASKED_RENDERER_WEBGL))||g.getParameter(g.RENDERER)||"webgl-unknown").replace(/[\\n\\r]+/g," ");}catch(e){r="renderer-error";}}' +
+    'function line(){readR();var m=st(d);return "scene="+scene+"\\nrenderer="+r+"\\nframes="+d.length+" med="+m[0]+" max="+m[1]+" span="+(tN?Math.round(tN-t00):0);}' +
+    // append-mode: Diag play keeps the game open for a whole session, so the
+    // marker is a log (capped); every flush appends, stalls append instantly
+    'function flush(){try{if(fs.statSync(MARK).size>131072)fs.writeFileSync(MARK,"");}catch(e){}w(line()+"\\n");}' +
+    'requestAnimationFrame(function f(){var t=performance.now();var dt=t0?t-t0:0;if(t0)d.push(dt);t0=t;if(!t00)t00=t;tN=t;' +
+    'if(dt>=1000&&sc<50){sc++;try{fs.appendFileSync(MARK,"stall ms="+Math.round(dt)+" frame="+n+"\\n");}catch(e){}}' +
     'if(window.SceneManager&&SceneManager._scene)scene=SceneManager._scene.constructor.name;' +
-    'if(++n%60===0)flush();if(n<3000)requestAnimationFrame(f);});' +
+    'if(++n%60===0)flush();if(n<2000000)requestAnimationFrame(f);});' +
+    'window.onerror=function(m){w(line()+"\\nerror="+String(m).slice(0,200));if(_oe)return _oe.apply(this,arguments);};' +
     '}catch(e){}})();</script>';
   const injected = orig.replace(/<\/body>/i, PROBE + '</body>');
   if (injected === orig) return null;
@@ -344,16 +360,8 @@ function injectDiagProbe(card) {
 
 function readDiag(marker) {
   try {
-    const t = fs.readFileSync(marker, 'utf8');
-    const g = (k) => (t.match(new RegExp('^' + k + '=(.*)$', 'm')) || [])[1];
-    return {
-      scene: g('scene') || 'none',
-      renderer: g('renderer') || 'unknown',
-      frames: parseInt(g('frames') || '0', 10) || 0,
-      med: parseInt(g('med') || '0', 10) || 0,
-      max: parseInt(g('max') || '0', 10) || 0,
-      error: g('error') || null,
-    };
+    const d = procs.parseDiag(fs.readFileSync(marker, 'utf8'));
+    return d.frames || d.scene !== 'none' ? d : null;
   } catch { return null; }
 }
 
@@ -368,9 +376,12 @@ async function doTestRun(card) {
   try {
     // attempt 0: the tool's own environment, unchanged (right on normal desktops)
     let r = await testAttempt(card, {});
+    // stderr is evidence even on success: gpu-process crash loops (periodic
+    // freezes) and driver spew land here while the verdict looks healthy
+    if (r.fatal && r.fatal.trim()) appendLog(card.id, `game stderr (tail): ${r.fatal.trimEnd().slice(-500)}`);
     const d = diag && readDiag(diag.marker);
     if (d) {
-      appendLog(card.id, `page diag: scene=${d.scene} renderer=${d.renderer} frames=${d.frames} med=${d.med}ms max=${d.max}ms${d.error ? ` error=${d.error}` : ''}`);
+      appendLog(card.id, `page diag: scene=${d.scene} renderer=${d.renderer} frames=${d.frames} med=${d.med}ms max=${d.max}ms span=${d.span}ms${d.error ? ` error=${d.error}` : ''}`);
       if (r.kind === 'no-window' && /^Scene_/.test(d.scene)) {
         appendLog(card.id, 'renderer check found no window but the page reached a scene — treating as launched (probe wins)');
         r = { kind: 'ok', viaXvfb: r.viaXvfb };
@@ -483,6 +494,7 @@ async function doTestRun(card) {
     if (hasXvfbRun()) {
       appendLog(card.id, 'no usable local display — retrying headless under xvfb-run');
       r = await testAttempt(card, { viaXvfb: true });
+      if (r.fatal && r.fatal.trim()) appendLog(card.id, `game stderr (tail): ${r.fatal.trimEnd().slice(-500)}`);
       if (r.kind === 'ok') return setStatus(card, 'launched OK headless (Xvfb — no window shown)', 'done');
       if (r.kind === 'no-window') {
         setStatus(card, 'no window even headless: process alive but the renderer never spawns — runtime cannot initialize graphics on this system; see NOTES.txt', 'error');
@@ -494,6 +506,44 @@ async function doTestRun(card) {
     appendLog(card.id, 'all display candidates rejected');
   } finally {
     if (diag) diag.restore();
+  }
+}
+
+// Diag play: launch the port with the diagnostic probe and let the user
+// actually PLAY until the problem shows up — the probe records frame-time
+// stats plus every ≥1s stall as it happens. Data is collected when the user
+// closes the game (15 min safety cap). Test Run's 8s window only ever sees
+// the title screen; gameplay-only lag needs a real session.
+async function doDiagRun(card) {
+  if (!card.finalDir) return;
+  const diag = injectDiagProbe(card);
+  if (!diag) { setStatus(card, 'diag play: could not inject the diagnostic probe into this port', 'error'); return; }
+  setStatus(card, 'diag play running — play until the problem shows, then close the game');
+  appendLog(card.id, 'diag play: launched with the diagnostic probe — freezes ≥1s are recorded; close the game to collect the report');
+  try {
+    const r = await new Promise((resolve) => {
+      const env = { ...process.env };
+      const p = spawn(path.join(card.finalDir, 'start.sh'),
+        ['--no-sandbox', '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows'],
+        { cwd: card.finalDir, stdio: ['ignore', 'ignore', 'pipe'], env });
+      let fatal = '';
+      p.stderr.on('data', (c) => { fatal += c; });
+      const cap = setTimeout(() => p.kill('SIGKILL'), 15 * 60e3);
+      p.on('close', (code, signal) => { clearTimeout(cap); resolve({ code, signal, fatal }); });
+      p.on('error', (e) => { clearTimeout(cap); resolve({ code: null, signal: null, fatal: `spawn: ${e.message}` }); });
+    });
+    if (r.fatal && r.fatal.trim()) appendLog(card.id, `game stderr (tail): ${r.fatal.trimEnd().slice(-500)}`);
+    const d = readDiag(diag.marker);
+    if (!d || !d.frames) {
+      setStatus(card, r.signal === 'SIGKILL' ? 'diag play: 15 min cap reached before the game reported frames' : 'diag play: the page never reported frames — see log', 'error');
+      appendLog(card.id, `diag play: no frame data (exit code ${r.code}, signal ${r.signal})`);
+      return;
+    }
+    appendLog(card.id, `diag play report: scene=${d.scene} renderer=${d.renderer} frames=${d.frames} med=${d.med}ms max=${d.max}ms span=${d.span}ms${d.error ? ` error=${d.error}` : ''}`);
+    for (const s of d.stalls) appendLog(card.id, `diag stall: ${s}`);
+    setStatus(card, `diag play done — ${d.frames} frames, med ${d.med}ms, max ${d.max}ms${d.stalls.length ? `, ${d.stalls.length} stall(s) ≥1s (see log)` : ', no ≥1s stalls'}`, d.stalls.length ? 'warn' : 'done');
+  } finally {
+    diag.restore();
   }
 }
 

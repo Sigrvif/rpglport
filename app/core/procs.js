@@ -36,4 +36,29 @@ function descendantCmdline(rootPid, needle) {
   return false;
 }
 
-module.exports = { descendantCmdline };
+// Parse the Test-Run diagnostic marker. Summary keys frames/med/max/span sit
+// space-separated on ONE line (only scene=/renderer=/error= start lines), so
+// summary keys must match at word boundaries — anchoring them at line starts
+// read them as 0 and made healthy runs look frozen.
+function parseDiag(text) {
+  const lines = text.split('\n');
+  let summary = null;
+  for (const l of lines) if (/\bframes=\d+/.test(l)) summary = l;
+  const num = (k) => {
+    const m = summary && summary.match(new RegExp('\\b' + k + '=(\\d+)'));
+    return m ? parseInt(m[1], 10) || 0 : 0;
+  };
+  const g = (re) => { const m = text.match(re); return m ? m[1] : null; };
+  return {
+    scene: g(/^scene=(.*)$/m) || 'none',
+    renderer: g(/^renderer=(.*)$/m) || 'unknown',
+    frames: num('frames'),
+    med: num('med'),
+    max: num('max'),
+    span: num('span'),
+    error: g(/^error=(.*)$/m),
+    stalls: lines.filter(l => /^stall /.test(l)).slice(-20),
+  };
+}
+
+module.exports = { descendantCmdline, parseDiag };

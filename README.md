@@ -106,6 +106,9 @@ launchers, fontconfig workaround and legacy libs).
   injects a temporary diagnostic probe into the port (restored afterwards) and logs
   the real WebGL renderer plus frame-time spread — software rendering (llvmpipe /
   SwiftShader, i.e. GPU init failed) is called out as the cause of input lag.
+  **Diag play** goes further: it launches the port with the same probe and lets you
+  play until the problem appears, recording every ≥1s stall — gameplay-only lag
+  never shows up in Test Run's 8-second title-screen window.
 
 ## Development
 
