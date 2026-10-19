@@ -8,6 +8,14 @@ const nwmap = require('./nwmap.json');
 const { cmpVer } = require('./detect');
 
 const MZ_FLOOR = '0.44.0';
+// NW.js releases below this floor do not open a window on modern Linux.
+// Verified on Arch 2026 (boot lab + gdb, kernel shared with user machines):
+// ≤ 0.29-era browsers reach an idle GTK main loop and NEVER spawn a renderer —
+// the process stays alive with no window and no output — while 0.22.3
+// segfaults on launch and 0.39.3 loads pages but its WebGL context never
+// initializes. Selection therefore never ships them (fall forward instead);
+// a manual override can still force one for experiments.
+const USABLE_FLOOR = '0.48.4';
 const IMPORT_DIR = () => path.join(os.homedir(), '.cache', 'rpglport', 'runtimes');
 
 function chromeMajorOf(version) {
@@ -65,28 +73,41 @@ function listPool(bundleRoot) {
 function choose(poolIn, detectedNW, engine, engineVersion, override) {
   const pool = [...poolIn].sort((a, b) => cmpVer(a.version, b.version)); // defensive: never trust caller order
   const notes = [], warnings = [];
-  let runtime = null;
   if (!pool.length) return { runtime: null, notes, warnings, refused: 'no usable runtimes in the pool' };
+  // Legacy runtimes are invisible to automatic selection; only a manual
+  // override can pick one (exported as nw_<S> variants keep working there).
+  const usable = override ? pool : pool.filter(p => cmpVer(p.version, USABLE_FLOOR) >= 0);
+  if (!usable.length) {
+    return { runtime: null, notes, warnings, refused: `every runtime in the pool is older than ${USABLE_FLOOR} — NW.js that old never opens a window on modern Linux (renderer never spawns); import at least nwjs-v${USABLE_FLOOR}-linux-x64` };
+  }
+  const legacy = detectedNW && cmpVer(detectedNW, USABLE_FLOOR) < 0;
+  let runtime = null;
   if (override) {
-    runtime = pool.find(p => p.version === override) || null;
+    runtime = usable.find(p => p.version === override) || null;
     if (!runtime) return { runtime: null, notes, warnings, refused: `override runtime ${override} not in pool` };
     notes.push(`manual override: ${override}`);
-  } else if (detectedNW && pool.some(p => p.version === detectedNW)) {
-    runtime = pool.find(p => p.version === detectedNW);
+  } else if (detectedNW && usable.some(p => p.version === detectedNW)) {
+    runtime = usable.find(p => p.version === detectedNW);
     notes.push(`exact match ${detectedNW}`);
   } else {
-    const newer = pool.filter(p => !detectedNW || cmpVer(p.version, detectedNW) > 0);
+    const newer = usable.filter(p => !detectedNW || cmpVer(p.version, detectedNW) > 0);
     if (newer.length) {
       runtime = newer[0];
-      if (detectedNW) notes.push(`exact ${detectedNW} not in pool; using nearest newer ${runtime.version}`);
-      else notes.push(`no version detected; using newest ${runtime.version}`);
+      if (detectedNW) {
+        notes.push(pool.some(p => p.version === detectedNW)
+          ? `exact ${detectedNW} in pool is below the usability floor; using nearest newer ${runtime.version}`
+          : `exact ${detectedNW} not in pool; using nearest newer ${runtime.version}`);
+      } else notes.push(`no version detected; using newest ${runtime.version}`);
     } else {
-      // nothing in the pool is ≥ the detected version: the fallback to the
-      // pool's newest is a DOWNGRADE vs what the game shipped with
-      runtime = pool[pool.length - 1];
+      // nothing usable is ≥ the detected version: the fallback to the newest
+      // usable entry is a DOWNGRADE vs what the game shipped with
+      runtime = usable[usable.length - 1];
       notes.push(`no runtime ≥ detected ${detectedNW} in pool; DOWNGRADING to newest available ${runtime.version}`);
       warnings.push(`downgrade from detected ${detectedNW} to ${runtime.version}: older Chromium than the game shipped with — test thoroughly`);
     }
+  }
+  if (legacy && !override) {
+    notes.push(`detected ${detectedNW} is below the ${USABLE_FLOOR} usability floor — NW.js that old never opens a window on modern Linux; shipping ${runtime.version} instead`);
   }
   if (engine === 'MZ' && cmpVer(runtime.version, MZ_FLOOR) < 0) {
     return { runtime: null, notes, warnings, refused: `MZ needs NW.js >= ${MZ_FLOOR} (Chromium 80+); ${runtime.version} is too old — import a newer runtime` };
@@ -105,4 +126,4 @@ function choose(poolIn, detectedNW, engine, engineVersion, override) {
   return { runtime, notes, warnings, refused: null };
 }
 
-module.exports = { listPool, choose, chromeMajorOf };
+module.exports = { listPool, choose, chromeMajorOf, USABLE_FLOOR };

@@ -5,7 +5,8 @@ const fs = require('fs');
 const gui = require('nw.gui');
 const Shell = gui.Shell;                    // NW exposes Shell (capital) — not lowercase like Electron
 const { analyzeInput, portCard, PortQueue, selftest, findLiveDisplays, hasXvfbRun, findProcDisplayPairs, xauthorityCandidates, findSessionEnvs } = require('./core/engine');
-const { listPool, choose } = require('./core/select');
+const { listPool, choose, USABLE_FLOOR } = require('./core/select');
+const { cmpVer } = require('./core/detect');
 const settings = require('./core/settings');
 
 const ROOT = findRoot();  // bundle root: the dir containing app/core/engine.js
@@ -90,7 +91,8 @@ async function refreshPool() {
 function runtimeLabel(p, card) {
   const r = choose(state.pool, card.info.detectedNW, card.info.engine, card.info.engineVersion, p.version);
   const tag = r.refused ? ' (refused: MZ floor)' : r.runtime ? `(+C${r.runtime.chromiumMajor})` : '';
-  return `${p.version} ${tag}`.trim();
+  const legacy = cmpVer(p.version, USABLE_FLOOR) < 0 ? ' — legacy, never auto-picked (no window on modern Linux)' : '';
+  return `${p.version} ${tag}${legacy}`.trim();
 }
 
 function fillRuntimeSelect(card) {
@@ -257,6 +259,7 @@ function existsPrompt(outDir) {
 }
 
 const { spawn } = require('child_process');
+const procs = require('./core/procs');
 
 // Test Run display ladder. A live X socket is NOT sufficient — the server can
 // reject the client during setup for lack of the session cookie (GTK reports
@@ -280,10 +283,16 @@ function testAttempt(card, { display, xauthority, viaXvfb, env: baseEnv }) {
     const p = spawn(cmd, args, { cwd: card.finalDir, stdio: ['ignore', 'ignore', 'pipe'], env });
     p.on('error', (e) => resolve({ kind: 'error', msg: e.message }));
     p.stderr.on('data', (c) => { fatal += c; });
-    const t = setTimeout(() => { p.kill('SIGTERM'); resolve({ kind: 'ok', viaXvfb }); }, 8000);
+    const verdict = () => {
+      // alive is not enough: a legacy runtime can idle forever with no window
+      // and no output — only a spawned renderer proves the game actually began
+      const ok = procs.descendantCmdline(p.pid, '--type=renderer');
+      resolve({ kind: ok ? 'ok' : 'no-window', viaXvfb });
+    };
+    const t = setTimeout(() => { p.kill('SIGTERM'); verdict(); }, 8000);
     p.on('close', (code, signal) => {
       clearTimeout(t);
-      if (signal === 'SIGTERM') resolve({ kind: 'ok', viaXvfb });        // our 8s timer — alive the whole window
+      if (signal === 'SIGTERM') verdict();                                 // our 8s timer — alive the whole window
       else if (/cannot open display/i.test(fatal)) resolve({ kind: 'no-display', fatal, code });
       else if (code === 0 || code === null) resolve({ kind: 'exited-early', fatal, code }); // self-exit ≠ launched (e.g. launcher-integrity DRM)
       else resolve({ kind: 'crashed', fatal, code });
@@ -300,7 +309,12 @@ async function doTestRun(card) {
   appendLog(card.id, `tool environment: ${envSummary(process.env)}`);
   // attempt 0: the tool's own environment, unchanged (right on normal desktops)
   let r = await testAttempt(card, {});
-  if (r.kind === 'ok') return setStatus(card, 'launched OK (no early crash)', 'done');
+  if (r.kind === 'ok') return setStatus(card, 'launched OK (window rendering)', 'done');
+  if (r.kind === 'no-window') {
+    setStatus(card, 'game process stayed alive but no window ever opened (renderer never spawned) — usually the runtime cannot initialize graphics on this system; see NOTES.txt', 'error');
+    appendLog(card.id, 'test-run: alive at 8s but no --type=renderer descendant — silent no-window');
+    return;
+  }
   if (r.kind === 'error') return setStatus(card, `test run failed: ${r.msg}`, 'error');
   if (r.kind === 'exited-early') {
     setStatus(card, `the game exited by itself right after launch (code ${r.code ?? 0}) — see NOTES.txt: possible launcher-integrity check`, 'error');
@@ -329,6 +343,11 @@ async function doTestRun(card) {
     if (r.kind === 'ok') {
       setStatus(card, `launched OK — adopted environment of ${s.comm || 'session'} (pid ${s.pid})`, 'done');
       appendLog(card.id, `booted with adopted env: ${envSummary(env)}`);
+      return;
+    }
+    if (r.kind === 'no-window') {
+      setStatus(card, 'game process stayed alive but no window ever opened (renderer never spawned) — usually the runtime cannot initialize graphics on this system; see NOTES.txt', 'error');
+      appendLog(card.id, 'test-run: alive at 8s but no --type=renderer descendant — silent no-window');
       return;
     }
     if (r.kind === 'crashed') {
@@ -369,6 +388,11 @@ async function doTestRun(card) {
       appendLog(card.id, `booted with DISPLAY=${c.display}${c.xauthority ? ` XAUTHORITY=${c.xauthority}` : ''}`);
       return;
     }
+    if (r.kind === 'no-window') {
+      setStatus(card, 'game process stayed alive but no window ever opened (renderer never spawned) — usually the runtime cannot initialize graphics on this system; see NOTES.txt', 'error');
+      appendLog(card.id, 'test-run: alive at 8s but no --type=renderer descendant — silent no-window');
+      return;
+    }
     if (r.kind === 'crashed') {
       const line = (r.fatal.match(/FATAL:[^\n]*|Check failed[^\n]*/) || [])[0] || `exit ${r.code}`;
       setStatus(card, `crashed: ${line}`, 'error');
@@ -388,6 +412,11 @@ async function doTestRun(card) {
     appendLog(card.id, 'no usable local display — retrying headless under xvfb-run');
     r = await testAttempt(card, { viaXvfb: true });
     if (r.kind === 'ok') return setStatus(card, 'launched OK headless (Xvfb — no window shown)', 'done');
+    if (r.kind === 'no-window') {
+      setStatus(card, 'no window even headless: process alive but the renderer never spawns — runtime cannot initialize graphics on this system; see NOTES.txt', 'error');
+      appendLog(card.id, 'test-run xvfb: alive at 8s but no --type=renderer descendant — silent no-window');
+      return;
+    }
   }
   setStatus(card, 'no usable display found — restart RPGLPort from the session where start.sh works (or install Xvfb on headless machines)', 'error');
   appendLog(card.id, 'all display candidates rejected');

@@ -7,6 +7,7 @@ const path = require('path');
 const { clearExecStack } = require('./elf');
 const { destIsCaseInsensitive } = require('./casescan');
 const { cmpVer } = require('./detect');
+const { USABLE_FLOOR } = require('./select');
 
 const SKIP_EXACT = new Set([
   'icudtl.dat', 'natives_blob.bin', 'snapshot_blob.bin', 'v8_context_snapshot.bin',
@@ -168,6 +169,9 @@ async function buildPort(opts) {
     // Gate on the selected runtime version (opts), not the directory name —
     // renamed/copied runtime dirs must not disable the workaround.
     const runtimeVersion = opts.runtimeVersion || (path.basename(runtimeDir).match(/nwjs-v(\d+\.\d+\.\d+)/) || [])[1] || '999.0.0';
+    if (info.detectedNW && cmpVer(info.detectedNW, USABLE_FLOOR) < 0 && cmpVer(runtimeVersion, USABLE_FLOOR) >= 0) {
+      notes.push(`native runtime ${info.detectedNW} not shipped: NW.js older than ${USABLE_FLOOR} never opens a window on modern Linux (the browser idles forever before spawning its renderer), so this port uses ${runtimeVersion}`);
+    }
     if (cmpVer(runtimeVersion, '0.30.0') < 0 && fs.existsSync(path.join(tmp, 'nw'))) {
       fs.writeFileSync(path.join(tmp, 'fonts.conf'), FONTCONFIG_CONF);
       fs.renameSync(path.join(tmp, 'nw'), path.join(tmp, 'nw.bin'));

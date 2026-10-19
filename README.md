@@ -50,15 +50,22 @@ porting — only for running the games.
 Porting a game means marrying its payload to the right NW.js runtime. RPGLPort keeps a
 **pool**:
 
-- the **bundled ladder** `0.12.3 / 0.19.5 / 0.22.3 / 0.29.0 / 0.48.4` (covering the
+- the **bundled ladder** `0.12.3 / 0.19.5 / 0.22.3 / 0.29.0 / 0.39.3 / 0.48.4` (covering the
   MV era and early MZ),
 - the **host** runtime the tool itself runs on (newest stable),
 - **user imports** via Settings (drop any `nwjs-vX.Y.Z-linux-*` dir in).
 
 Selection policy per game: **exact match** for the detected NW.js version →
-**nearest newer** → **newest** (with a downgrade warning). MZ is refused below
-**0.44.0** (needs Chromium 80+ syntax). Every card has a manual override dropdown
-listing the whole pool; overrides bypass policy but not the MZ floor.
+**nearest newer** → **newest** (with a downgrade warning). Two floors apply:
+MZ is refused below **0.44.0** (needs Chromium 80+ syntax), and no runtime below
+the **usability floor 0.48.4** is ever auto-selected — verified on modern Arch,
+every older NW.js release fails to open a window (the browser idles forever
+before spawning its renderer, or worse; 0.39.3 loads pages but its WebGL context
+never initializes), so ports fall forward to the nearest usable runtime and
+`NOTES.txt` records the substitution. Every card has a manual override dropdown
+listing the whole pool; overrides bypass policy but not the MZ floor (use them
+to experiment with legacy runtimes — the ports still carry the era-specific
+launchers, fontconfig workaround and legacy libs).
 
 ## Odd cases handled
 
@@ -92,7 +99,10 @@ listing the whole pool; overrides bypass policy but not the MZ floor.
 - Case-scanning works off parsed asset references; paths constructed at runtime by
   plugins can't be pre-scanned.
 - Old runtimes may hit new-glibc/fontconfig quirks on modern distros — run the port's
-  Test Run (the fontconfig quirk is worked around automatically, see above).
+  Test Run (the fontconfig quirk is worked around automatically, see above). Automatic
+  selection never ships them (usability floor, above); Test Run also detects the
+  failure mode honestly — a process that stays alive without ever opening a window
+  (no renderer spawned) is reported as an error, not a success.
 
 ## Development
 
