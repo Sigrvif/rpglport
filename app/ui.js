@@ -368,6 +368,16 @@ function readDiag(marker) {
 const envSummary = (env) =>
   `DISPLAY=${env.DISPLAY || '(unset)'} XAUTHORITY=${env.XAUTHORITY ? 'set' : 'unset'} WAYLAND_DISPLAY=${env.WAYLAND_DISPLAY || '(unset)'} XDG_RUNTIME_DIR=${env.XDG_RUNTIME_DIR || '(unset)'} GDK_BACKEND=${env.GDK_BACKEND || '(unset)'}`;
 
+// Old Chromium's GLX present path cannot obtain vsync under XWayland; the
+// game then free-runs at unthrottled fps (MV logic runs too fast) or stalls
+// for seconds (input lag, frozen cutscenes) and tears. Seen as repeated
+// "GetVSyncParametersIfAvailable() failed" lines in game stderr.
+function logVsyncHint(card, fatal) {
+  if (/GetVSyncParametersIfAvailable\(\) failed/.test(fatal)) {
+    appendLog(card.id, 'vsync unavailable: this runtime\'s GL present path fails under XWayland — expect stutter, tearing, speed drift. Try re-porting with the newest runtime in the dropdown (host 0.115.x), or launch with --use-angle=vulkan');
+  }
+}
+
 async function doTestRun(card) {
   if (!card.finalDir) return;
   setStatus(card, 'test run…');
@@ -378,7 +388,10 @@ async function doTestRun(card) {
     let r = await testAttempt(card, {});
     // stderr is evidence even on success: gpu-process crash loops (periodic
     // freezes) and driver spew land here while the verdict looks healthy
-    if (r.fatal && r.fatal.trim()) appendLog(card.id, `game stderr (tail): ${r.fatal.trimEnd().slice(-500)}`);
+    if (r.fatal && r.fatal.trim()) {
+      appendLog(card.id, `game stderr (tail): ${r.fatal.trimEnd().slice(-500)}`);
+      logVsyncHint(card, r.fatal);
+    }
     const d = diag && readDiag(diag.marker);
     if (d) {
       appendLog(card.id, `page diag: scene=${d.scene} renderer=${d.renderer} frames=${d.frames} med=${d.med}ms max=${d.max}ms span=${d.span}ms${d.error ? ` error=${d.error}` : ''}`);
@@ -532,7 +545,10 @@ async function doDiagRun(card) {
       p.on('close', (code, signal) => { clearTimeout(cap); resolve({ code, signal, fatal }); });
       p.on('error', (e) => { clearTimeout(cap); resolve({ code: null, signal: null, fatal: `spawn: ${e.message}` }); });
     });
-    if (r.fatal && r.fatal.trim()) appendLog(card.id, `game stderr (tail): ${r.fatal.trimEnd().slice(-500)}`);
+    if (r.fatal && r.fatal.trim()) {
+      appendLog(card.id, `game stderr (tail): ${r.fatal.trimEnd().slice(-500)}`);
+      logVsyncHint(card, r.fatal);
+    }
     const d = readDiag(diag.marker);
     if (!d || !d.frames) {
       setStatus(card, r.signal === 'SIGKILL' ? 'diag play: 15 min cap reached before the game reported frames' : 'diag play: the page never reported frames — see log', 'error');
