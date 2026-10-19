@@ -102,7 +102,10 @@ launchers, fontconfig workaround and legacy libs).
   Test Run (the fontconfig quirk is worked around automatically, see above). Automatic
   selection never ships them (usability floor, above); Test Run also detects the
   failure mode honestly — a process that stays alive without ever opening a window
-  (no renderer spawned) is reported as an error, not a success.
+  (no renderer spawned) is reported as an error, not a success. Every Test Run also
+  injects a temporary diagnostic probe into the port (restored afterwards) and logs
+  the real WebGL renderer plus frame-time spread — software rendering (llvmpipe /
+  SwiftShader, i.e. GPU init failed) is called out as the cause of input lag.
 
 ## Development
 

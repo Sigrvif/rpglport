@@ -283,21 +283,78 @@ function testAttempt(card, { display, xauthority, viaXvfb, env: baseEnv }) {
     const p = spawn(cmd, args, { cwd: card.finalDir, stdio: ['ignore', 'ignore', 'pipe'], env });
     p.on('error', (e) => resolve({ kind: 'error', msg: e.message }));
     p.stderr.on('data', (c) => { fatal += c; });
-    const verdict = () => {
+    const t = setTimeout(() => {
       // alive is not enough: a legacy runtime can idle forever with no window
-      // and no output — only a spawned renderer proves the game actually began
+      // and no output — only a spawned renderer proves the game actually began.
+      // Snapshot BEFORE the kill: SIGTERM starts Chromium shutdown and the
+      // renderer children vanish within milliseconds — reading after the kill
+      // misreports a healthy windowed launch as no-window (seen on desktop).
       const ok = procs.descendantCmdline(p.pid, '--type=renderer');
+      p.kill('SIGTERM');
       resolve({ kind: ok ? 'ok' : 'no-window', viaXvfb });
-    };
-    const t = setTimeout(() => { p.kill('SIGTERM'); verdict(); }, 8000);
+    }, 8000);
     p.on('close', (code, signal) => {
       clearTimeout(t);
-      if (signal === 'SIGTERM') verdict();                                 // our 8s timer — alive the whole window
+      if (signal === 'SIGTERM') resolve({ kind: 'ok', viaXvfb });          // external SIGTERM before our timer — treat as before
       else if (/cannot open display/i.test(fatal)) resolve({ kind: 'no-display', fatal, code });
       else if (code === 0 || code === null) resolve({ kind: 'exited-early', fatal, code }); // self-exit ≠ launched (e.g. launcher-integrity DRM)
       else resolve({ kind: 'crashed', fatal, code });
     });
   });
+}
+
+// Test-Run diagnostic: a temporary, self-contained probe appended to the
+// port's index.html. It records which scene (if any) the page reached, the
+// real WebGL renderer string (llvmpipe/SwiftShader = GPU init failed, which
+// is exactly the "very laggy" report), and rAF frame-time spread (median/max
+// quantifies the periodic freezes). Restored in doTestRun's finally.
+function injectDiagProbe(card) {
+  const idx = ['www/index.html', 'index.html']
+    .map(rel => path.join(card.finalDir, rel))
+    .find(p => fs.existsSync(p));
+  if (!idx) return null;
+  const marker = path.join(card.finalDir, '.rpglport-diag.txt');
+  let orig;
+  try { orig = fs.readFileSync(idx, 'utf8'); } catch { return null; }
+  const PROBE = '<script>(function(){try{var fs=require("fs"),MARK=' + JSON.stringify(marker) + ';' +
+    'function w(s){try{fs.writeFileSync(MARK,s)}catch(e){}}' +
+    'function st(d){var b=d.slice().sort(function(x,y){return x-y});return [Math.round(b[b.length>>1]||0),Math.round(b[b.length-1]||0)];}' +
+    'var gl=null;try{var c=document.createElement("canvas");gl=c.getContext("webgl")||c.getContext("experimental-webgl")}catch(e){}' +
+    'var r="webgl-unavailable";' +
+    'if(gl){var dbg=gl.getExtension("WEBGL_debug_renderer_info");r=String((dbg&&gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL))||gl.getParameter(gl.RENDERER)||"webgl-unknown").replace(/[\\n\\r]+/g," ");}' +
+    'var scene="none",n=0,t0=0,d=[],_oe=window.onerror;' +
+    'window.onerror=function(m){w("scene="+scene+"\\nrenderer="+r+"\\nframes="+d.length+" med="+st(d)[0]+" max="+st(d)[1]+"\\nerror="+String(m).slice(0,200));if(_oe)return _oe.apply(this,arguments);};' +
+    'function flush(){w("scene="+scene+"\\nrenderer="+r+"\\nframes="+d.length+" med="+st(d)[0]+" max="+st(d)[1]);}' +
+    'requestAnimationFrame(function f(t){if(t0!==0)d.push(t-t0);t0=t;' +
+    'if(window.SceneManager&&SceneManager._scene)scene=SceneManager._scene.constructor.name;' +
+    'if(++n%60===0)flush();if(n<3000)requestAnimationFrame(f);});' +
+    '}catch(e){}})();</script>';
+  const injected = orig.replace(/<\/body>/i, PROBE + '</body>');
+  if (injected === orig) return null;
+  try { fs.writeFileSync(idx, injected); } catch { return null; }
+  try { fs.unlinkSync(marker); } catch {}
+  return {
+    marker,
+    restore() {
+      try { fs.writeFileSync(idx, orig); } catch { /* best effort */ }
+      try { fs.unlinkSync(marker); } catch {}
+    },
+  };
+}
+
+function readDiag(marker) {
+  try {
+    const t = fs.readFileSync(marker, 'utf8');
+    const g = (k) => (t.match(new RegExp('^' + k + '=(.*)$', 'm')) || [])[1];
+    return {
+      scene: g('scene') || 'none',
+      renderer: g('renderer') || 'unknown',
+      frames: parseInt(g('frames') || '0', 10) || 0,
+      med: parseInt(g('med') || '0', 10) || 0,
+      max: parseInt(g('max') || '0', 10) || 0,
+      error: g('error') || null,
+    };
+  } catch { return null; }
 }
 
 const envSummary = (env) =>
@@ -307,47 +364,33 @@ async function doTestRun(card) {
   if (!card.finalDir) return;
   setStatus(card, 'test run…');
   appendLog(card.id, `tool environment: ${envSummary(process.env)}`);
-  // attempt 0: the tool's own environment, unchanged (right on normal desktops)
-  let r = await testAttempt(card, {});
-  if (r.kind === 'ok') return setStatus(card, 'launched OK (window rendering)', 'done');
-  if (r.kind === 'no-window') {
-    setStatus(card, 'game process stayed alive but no window ever opened (renderer never spawned) — usually the runtime cannot initialize graphics on this system; see NOTES.txt', 'error');
-    appendLog(card.id, 'test-run: alive at 8s but no --type=renderer descendant — silent no-window');
-    return;
-  }
-  if (r.kind === 'error') return setStatus(card, `test run failed: ${r.msg}`, 'error');
-  if (r.kind === 'exited-early') {
-    setStatus(card, `the game exited by itself right after launch (code ${r.code ?? 0}) — see NOTES.txt: possible launcher-integrity check`, 'error');
-    appendLog(card.id, `test-run early self-exit ${r.code}: ${r.fatal.slice(-500)}`);
-    return;
-  }
-  if (r.kind === 'crashed') {
-    const line = (r.fatal.match(/FATAL:[^\n]*|Check failed[^\n]*/) || [])[0] || `exit ${r.code}`;
-    setStatus(card, `crashed: ${line}`, 'error');
-    appendLog(card.id, `test-run exit ${r.code}: ${r.fatal.slice(-500)}`);
-    return;
-  }
-  // no-display. The pair-based retries below carry the tool's inherited env —
-  // which may itself be poisoned for X (a correct DISPLAY+XAUTHORITY can still
-  // be rejected when e.g. GDK_BACKEND/WAYLAND_DISPLAY/XDG_RUNTIME_DIR are
-  // stale). So FIRST adopt whole working environments from session processes
-  // (the shell where start.sh works holds one), then fall back to pairs.
-  const live = new Set(await findLiveDisplays());
-  const sessions = findSessionEnvs('/proc', live);
-  appendLog(card.id, `display ${process.env.DISPLAY || '(unset)'} unreachable — ${sessions.length} session env(s), then pair candidates`);
-  for (const s of sessions) {
-    const env = { ...s.env };
-    if (!env.PATH) env.PATH = process.env.PATH;
-    appendLog(card.id, `adopting env of ${s.comm || 'process'} (pid ${s.pid}): ${envSummary(env)}`);
-    r = await testAttempt(card, { env });
+  const diag = injectDiagProbe(card);
+  try {
+    // attempt 0: the tool's own environment, unchanged (right on normal desktops)
+    let r = await testAttempt(card, {});
+    const d = diag && readDiag(diag.marker);
+    if (d) {
+      appendLog(card.id, `page diag: scene=${d.scene} renderer=${d.renderer} frames=${d.frames} med=${d.med}ms max=${d.max}ms${d.error ? ` error=${d.error}` : ''}`);
+      if (r.kind === 'no-window' && /^Scene_/.test(d.scene)) {
+        appendLog(card.id, 'renderer check found no window but the page reached a scene — treating as launched (probe wins)');
+        r = { kind: 'ok', viaXvfb: r.viaXvfb };
+      }
+    }
     if (r.kind === 'ok') {
-      setStatus(card, `launched OK — adopted environment of ${s.comm || 'session'} (pid ${s.pid})`, 'done');
-      appendLog(card.id, `booted with adopted env: ${envSummary(env)}`);
+      const sw = d && /llvmpipe|swiftshader|softpipe|software rasterizer/i.test(d.renderer);
+      if (sw) setStatus(card, `launched OK — SOFTWARE rendering (${d.renderer}): GPU init failed, this causes input lag and freezes`, 'warn');
+      else setStatus(card, 'launched OK (window rendering)', 'done');
       return;
     }
     if (r.kind === 'no-window') {
       setStatus(card, 'game process stayed alive but no window ever opened (renderer never spawned) — usually the runtime cannot initialize graphics on this system; see NOTES.txt', 'error');
       appendLog(card.id, 'test-run: alive at 8s but no --type=renderer descendant — silent no-window');
+      return;
+    }
+    if (r.kind === 'error') return setStatus(card, `test run failed: ${r.msg}`, 'error');
+    if (r.kind === 'exited-early') {
+      setStatus(card, `the game exited by itself right after launch (code ${r.code ?? 0}) — see NOTES.txt: possible launcher-integrity check`, 'error');
+      appendLog(card.id, `test-run early self-exit ${r.code}: ${r.fatal.slice(-500)}`);
       return;
     }
     if (r.kind === 'crashed') {
@@ -356,70 +399,102 @@ async function doTestRun(card) {
       appendLog(card.id, `test-run exit ${r.code}: ${r.fatal.slice(-500)}`);
       return;
     }
-    if (r.kind === 'exited-early') {
-      setStatus(card, `the game exited by itself right after launch (code ${r.code ?? 0}) — see NOTES.txt: possible launcher-integrity check`, 'error');
-      appendLog(card.id, `test-run early self-exit ${r.code}: ${r.fatal.slice(-500)}`);
-      return;
+    // no-display. The pair-based retries below carry the tool's inherited env —
+    // which may itself be poisoned for X (a correct DISPLAY+XAUTHORITY can still
+    // be rejected when e.g. GDK_BACKEND/WAYLAND_DISPLAY/XDG_RUNTIME_DIR are
+    // stale). So FIRST adopt whole working environments from session processes
+    // (the shell where start.sh works holds one), then fall back to pairs.
+    const live = new Set(await findLiveDisplays());
+    const sessions = findSessionEnvs('/proc', live);
+    appendLog(card.id, `display ${process.env.DISPLAY || '(unset)'} unreachable — ${sessions.length} session env(s), then pair candidates`);
+    for (const s of sessions) {
+      const env = { ...s.env };
+      if (!env.PATH) env.PATH = process.env.PATH;
+      appendLog(card.id, `adopting env of ${s.comm || 'process'} (pid ${s.pid}): ${envSummary(env)}`);
+      r = await testAttempt(card, { env });
+      if (r.kind === 'ok') {
+        setStatus(card, `launched OK — adopted environment of ${s.comm || 'session'} (pid ${s.pid})`, 'done');
+        appendLog(card.id, `booted with adopted env: ${envSummary(env)}`);
+        return;
+      }
+      if (r.kind === 'no-window') {
+        setStatus(card, 'game process stayed alive but no window ever opened (renderer never spawned) — usually the runtime cannot initialize graphics on this system; see NOTES.txt', 'error');
+        appendLog(card.id, 'test-run: alive at 8s but no --type=renderer descendant — silent no-window');
+        return;
+      }
+      if (r.kind === 'crashed') {
+        const line = (r.fatal.match(/FATAL:[^\n]*|Check failed[^\n]*/) || [])[0] || `exit ${r.code}`;
+        setStatus(card, `crashed: ${line}`, 'error');
+        appendLog(card.id, `test-run exit ${r.code}: ${r.fatal.slice(-500)}`);
+        return;
+      }
+      if (r.kind === 'exited-early') {
+        setStatus(card, `the game exited by itself right after launch (code ${r.code ?? 0}) — see NOTES.txt: possible launcher-integrity check`, 'error');
+        appendLog(card.id, `test-run early self-exit ${r.code}: ${r.fatal.slice(-500)}`);
+        return;
+      }
+      if (r.kind === 'error') return setStatus(card, `test run failed: ${r.msg}`, 'error');
+      const xlib = (r.fatal.match(/Xlib:[^\n]*/) || [])[0] || 'cannot open display';
+      appendLog(card.id, `adopted env rejected: ${xlib.trim()}`);
     }
-    if (r.kind === 'error') return setStatus(card, `test run failed: ${r.msg}`, 'error');
-    const xlib = (r.fatal.match(/Xlib:[^\n]*/) || [])[0] || 'cannot open display';
-    appendLog(card.id, `adopted env rejected: ${xlib.trim()}`);
+    // pair-based fallback (environments without /proc-visible session processes)
+    const auths = new Set();
+    for (const p of findProcDisplayPairs()) if (p.xauthority) auths.add(p.xauthority);
+    if (process.env.XAUTHORITY) auths.add(process.env.XAUTHORITY);
+    for (const a of xauthorityCandidates()) auths.add(a);
+    const candidates = [];
+    const seen = new Set();
+    const push = (display, xauthority) => {
+      const key = `${display}|${xauthority || ''}`;
+      if (!seen.has(key)) { seen.add(key); candidates.push({ display, xauthority }); }
+    };
+    for (const p of findProcDisplayPairs().filter(p => live.has(p.display))) push(p.display, p.xauthority);
+    for (const d2 of live) {
+      for (const a of auths) push(d2, a);
+      push(d2, null);
+    }
+    for (const c of candidates) {
+      r = await testAttempt(card, c);
+      if (r.kind === 'ok') {
+        setStatus(card, `launched OK on ${c.display}${c.xauthority ? ' (session authority)' : ''}`, 'done');
+        appendLog(card.id, `booted with DISPLAY=${c.display}${c.xauthority ? ` XAUTHORITY=${c.xauthority}` : ''}`);
+        return;
+      }
+      if (r.kind === 'no-window') {
+        setStatus(card, 'game process stayed alive but no window ever opened (renderer never spawned) — usually the runtime cannot initialize graphics on this system; see NOTES.txt', 'error');
+        appendLog(card.id, 'test-run: alive at 8s but no --type=renderer descendant — silent no-window');
+        return;
+      }
+      if (r.kind === 'crashed') {
+        const line = (r.fatal.match(/FATAL:[^\n]*|Check failed[^\n]*/) || [])[0] || `exit ${r.code}`;
+        setStatus(card, `crashed: ${line}`, 'error');
+        appendLog(card.id, `test-run exit ${r.code}: ${r.fatal.slice(-500)}`);
+        return;
+      }
+      if (r.kind === 'exited-early') {
+        setStatus(card, `the game exited by itself right after launch (code ${r.code ?? 0}) — see NOTES.txt: possible launcher-integrity check`, 'error');
+        appendLog(card.id, `test-run early self-exit ${r.code}: ${r.fatal.slice(-500)}`);
+        return;
+      }
+      if (r.kind === 'error') return setStatus(card, `test run failed: ${r.msg}`, 'error');
+      const xlib = (r.fatal.match(/Xlib:[^\n]*/) || [])[0] || 'cannot open display';
+      appendLog(card.id, `candidate ${c.display}${c.xauthority ? ` (${c.xauthority})` : ' (no authority)'} rejected: ${xlib.trim()}`);
+    }
+    if (hasXvfbRun()) {
+      appendLog(card.id, 'no usable local display — retrying headless under xvfb-run');
+      r = await testAttempt(card, { viaXvfb: true });
+      if (r.kind === 'ok') return setStatus(card, 'launched OK headless (Xvfb — no window shown)', 'done');
+      if (r.kind === 'no-window') {
+        setStatus(card, 'no window even headless: process alive but the renderer never spawns — runtime cannot initialize graphics on this system; see NOTES.txt', 'error');
+        appendLog(card.id, 'test-run xvfb: alive at 8s but no --type=renderer descendant — silent no-window');
+        return;
+      }
+    }
+    setStatus(card, 'no usable display found — restart RPGLPort from the session where start.sh works (or install Xvfb on headless machines)', 'error');
+    appendLog(card.id, 'all display candidates rejected');
+  } finally {
+    if (diag) diag.restore();
   }
-  // pair-based fallback (environments without /proc-visible session processes)
-  const auths = new Set();
-  for (const p of findProcDisplayPairs()) if (p.xauthority) auths.add(p.xauthority);
-  if (process.env.XAUTHORITY) auths.add(process.env.XAUTHORITY);
-  for (const a of xauthorityCandidates()) auths.add(a);
-  const candidates = [];
-  const seen = new Set();
-  const push = (display, xauthority) => {
-    const key = `${display}|${xauthority || ''}`;
-    if (!seen.has(key)) { seen.add(key); candidates.push({ display, xauthority }); }
-  };
-  for (const p of findProcDisplayPairs().filter(p => live.has(p.display))) push(p.display, p.xauthority);
-  for (const d of live) {
-    for (const a of auths) push(d, a);
-    push(d, null);
-  }
-  for (const c of candidates) {
-    r = await testAttempt(card, c);
-    if (r.kind === 'ok') {
-      setStatus(card, `launched OK on ${c.display}${c.xauthority ? ' (session authority)' : ''}`, 'done');
-      appendLog(card.id, `booted with DISPLAY=${c.display}${c.xauthority ? ` XAUTHORITY=${c.xauthority}` : ''}`);
-      return;
-    }
-    if (r.kind === 'no-window') {
-      setStatus(card, 'game process stayed alive but no window ever opened (renderer never spawned) — usually the runtime cannot initialize graphics on this system; see NOTES.txt', 'error');
-      appendLog(card.id, 'test-run: alive at 8s but no --type=renderer descendant — silent no-window');
-      return;
-    }
-    if (r.kind === 'crashed') {
-      const line = (r.fatal.match(/FATAL:[^\n]*|Check failed[^\n]*/) || [])[0] || `exit ${r.code}`;
-      setStatus(card, `crashed: ${line}`, 'error');
-      appendLog(card.id, `test-run exit ${r.code}: ${r.fatal.slice(-500)}`);
-      return;
-    }
-    if (r.kind === 'exited-early') {
-      setStatus(card, `the game exited by itself right after launch (code ${r.code ?? 0}) — see NOTES.txt: possible launcher-integrity check`, 'error');
-      appendLog(card.id, `test-run early self-exit ${r.code}: ${r.fatal.slice(-500)}`);
-      return;
-    }
-    if (r.kind === 'error') return setStatus(card, `test run failed: ${r.msg}`, 'error');
-    const xlib = (r.fatal.match(/Xlib:[^\n]*/) || [])[0] || 'cannot open display';
-    appendLog(card.id, `candidate ${c.display}${c.xauthority ? ` (${c.xauthority})` : ' (no authority)'} rejected: ${xlib.trim()}`);
-  }
-  if (hasXvfbRun()) {
-    appendLog(card.id, 'no usable local display — retrying headless under xvfb-run');
-    r = await testAttempt(card, { viaXvfb: true });
-    if (r.kind === 'ok') return setStatus(card, 'launched OK headless (Xvfb — no window shown)', 'done');
-    if (r.kind === 'no-window') {
-      setStatus(card, 'no window even headless: process alive but the renderer never spawns — runtime cannot initialize graphics on this system; see NOTES.txt', 'error');
-      appendLog(card.id, 'test-run xvfb: alive at 8s but no --type=renderer descendant — silent no-window');
-      return;
-    }
-  }
-  setStatus(card, 'no usable display found — restart RPGLPort from the session where start.sh works (or install Xvfb on headless machines)', 'error');
-  appendLog(card.id, 'all display candidates rejected');
 }
 
 /* wiring */
