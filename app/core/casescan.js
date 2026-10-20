@@ -107,6 +107,14 @@ function collectRefs(payloadRoot) {
     let txt;
     try { txt = fs.readFileSync(f, 'utf8'); } catch { continue; }
     for (const m of txt.replace(/\\/g, '/').match(LITERAL_RE) || []) add(m);
+    // Plugin note-tags that name assets without ever forming an img/ path:
+    // Ayatam 歩行グラフィック拡張MVMZ lives in event comments like
+    // <acg character: $name, opts> — invisible to the key table (not a data
+    // key) and to LITERAL_RE (no img/ prefix). The data's casing is what the
+    // game asks for at load time, so it drives the case fixes.
+    for (const m of txt.matchAll(/<acg ([a-zA-Z]+):\s*([^,>\n]+?)\s*(?:,[^>]*)?>/g)) {
+      if (m[1] === 'character' && m[2]) addImg('img/characters', m[2]);
+    }
   }
   return { refCounts, scanErrors };
 }
@@ -174,13 +182,14 @@ function scan(payloadRoot) {
     if (!diskBases.has(base)) continue;                                  // sibling on disk → not missing
     // Encrypted-asset case fix (base has a sibling on disk): MV's Decrypter
     // swaps extensions at load time (.png→.rpgmvp, .ogg→.rpgmvo, .m4a→.rpgmvm)
-    // but references always carry the PLAIN extension, so the exact-match fix
-    // above never sees these. Windows loaded them through its case-insensitive
-    // open; on Linux the Decrypter's lookup is case-sensitive, so the encrypted
-    // file must carry the referenced casing.
-    const enc = files.get(base + '.rpgmvp') ? '.rpgmvp'
-      : files.get(base + '.rpgmvo') ? '.rpgmvo'
-      : files.get(base + '.rpgmvm') ? '.rpgmvm' : null;
+    // and MZ's weak encryption appends a literal `_` (Bitmap fetches url+"_"
+    // when hasEncryptedImages: foo.png → foo.png_) — but references always
+    // carry the PLAIN extension, so the exact-match fix above never sees these.
+    // Windows loaded them through its case-insensitive open; on Linux the
+    // loader's lookup is case-sensitive, so the file must carry the referenced
+    // casing.
+    const ENC_EXTS = ['.rpgmvp', '.rpgmvo', '.rpgmvm', '.png_', '.jpg_', '.jpeg_', '.ogg_', '.m4a_', '.wav_', '.mp3_', '.webm_'];
+    const enc = ENC_EXTS.find(e => files.get(base + e)) || null;
     if (!enc) continue;
     const encDisk = files.get(base + enc);
     if (encDisk.length !== 1) { conflicts.push({ files: encDisk }); continue; }

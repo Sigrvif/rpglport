@@ -143,3 +143,41 @@ test('real fixtures: zero unresolved conflicts', { skip: !require('./helpers/fix
     assert.equal(r.conflicts.length, 0, dir);
   }
 });
+
+test("MZ weak encryption (_-suffix) case fix: Bitmap fetches url+\"_\" when hasEncryptedImages", () => {
+  // System.json hasEncryptedImages → rmmz_core fetches img/characters/%24name.png
+  // as name.png + "_" — Windows resolved $Transparent.png_ case-insensitively,
+  // Linux needs the referenced casing on disk. Refs arrive via Ayatam note tags
+  // (<acg character: $name, opts>), not data keys.
+  const root = mkGame({
+    "img/characters/$Transparent.png_": "png",
+    "data/Map001.json": JSON.stringify([{ parameters: ["<acg character: $transparent, 0>"] }]),
+  });
+  const r = scan(root);
+  assert.deepEqual(r.fixes, [{ actual: "img/characters/$Transparent.png_", ref: "img/characters/$transparent.png_" }]);
+  assert.equal(r.missing.length, 0);
+});
+
+test("MZ weak encryption: both casings referenced → duplicate materializes each", () => {
+  const root = mkGame({
+    "img/characters/$Transparent.png_": "png",
+    "data/Map001.json": JSON.stringify([
+      { parameters: ["<acg character: $transparent, 0>"] },
+      { characterName: "$Transparent" },
+    ]),
+  });
+  const r = scan(root);
+  assert.deepEqual(r.fixes, []);
+  assert.deepEqual(r.duplicates, [{ target: "img/characters/$Transparent.png_", as: "img/characters/$transparent.png_" }]);
+  assert.equal(r.missing.length, 0);
+});
+
+test("acg note tag with subdir name resolves under img/characters", () => {
+  const root = mkGame({
+    "img/characters/Map/Hide/!$Hide_locker_frames1_asPic.png_": "png",
+    "data/Map001.json": JSON.stringify([{ parameters: ["<acg character: Map/Hide/!$Hide_locker_frames1_asPic, 0>"] }]),
+  });
+  const r = scan(root);
+  assert.deepEqual(r.fixes, []);
+  assert.equal(r.missing.length, 0);   // exact case on disk and in the tag → clean
+});
