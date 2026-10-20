@@ -59,7 +59,15 @@ function listPool(bundleRoot) {
     const r = admit(dir, source);
     r.entry ? pool.push(r.entry) : rejected.push({ name: r.name, reason: r.reason });
   };
-  tryAdmit(bundleRoot, 'host');
+  // Host entry: prefer the clean runtime dir of a dev checkout (_host/) over
+  // the app root itself — the root only mirrors nw/lib via symlinks and lacks
+  // the rest of the runtime (paks, icudtl.dat, locales). In a dist bundle the
+  // root IS the host runtime, so it is admitted directly (buildPort skips the
+  // tool's additive files there — see TOOL_ROOT_SKIP).
+  const hostDir = fs.existsSync(path.join(bundleRoot, '_host', 'nw'))
+    ? path.join(bundleRoot, '_host')
+    : bundleRoot;
+  tryAdmit(hostDir, 'host');
   for (const base of [path.join(bundleRoot, 'runtimes'), IMPORT_DIR()]) {
     if (!fs.existsSync(base)) continue;
     for (const e of fs.readdirSync(base, { withFileTypes: true })) {
@@ -91,12 +99,18 @@ function choose(poolIn, detectedNW, engine, engineVersion, override) {
     notes.push(`exact match ${detectedNW}`);
   } else {
     const newer = usable.filter(p => !detectedNW || cmpVer(p.version, detectedNW) > 0);
-    if (newer.length) {
+    if (legacy) {
+      // Native era is below the usability floor, so era-fidelity is already
+      // lost — ship the NEWEST usable runtime. Modern Chromium's present path
+      // also fixes the XWayland vsync/stall/tear problems that plague 0.48-era
+      // runtimes on Wayland desktops (user-verified on radeonsi: cutscenes and
+      // timing break on 0.48.4, work on 0.115.0).
+      runtime = usable[usable.length - 1];
+      notes.push(`native ${detectedNW} is below the ${USABLE_FLOOR} usability floor; shipping the newest usable runtime ${runtime.version}`);
+    } else if (newer.length) {
       runtime = newer[0];
       if (detectedNW) {
-        notes.push(pool.some(p => p.version === detectedNW)
-          ? `exact ${detectedNW} in pool is below the usability floor; using nearest newer ${runtime.version}`
-          : `exact ${detectedNW} not in pool; using nearest newer ${runtime.version}`);
+        notes.push(`exact ${detectedNW} not in pool; using nearest newer ${runtime.version}`);
       } else notes.push(`no version detected; using newest ${runtime.version}`);
     } else {
       // nothing usable is ≥ the detected version: the fallback to the newest

@@ -61,8 +61,11 @@ MZ is refused below **0.44.0** (needs Chromium 80+ syntax), and no runtime below
 the **usability floor 0.48.4** is ever auto-selected — verified on modern Arch,
 every older NW.js release fails to open a window (the browser idles forever
 before spawning its renderer, or worse; 0.39.3 loads pages but its WebGL context
-never initializes), so ports fall forward to the nearest usable runtime and
-`NOTES.txt` records the substitution. Every card has a manual override dropdown
+never initializes). Games whose **native** runtime is below the floor ship with
+the **newest usable runtime** instead of the nearest one: native-era fidelity is
+already lost there, and modern Chromium fixes present-path problems (vsync,
+tearing, stalls) that 0.48-era runtimes hit on Wayland desktops. `NOTES.txt`
+records every substitution. Every card has a manual override dropdown
 listing the whole pool; overrides bypass policy but not the MZ floor (use them
 to experiment with legacy runtimes — the ports still carry the era-specific
 launchers, fontconfig workaround and legacy libs).

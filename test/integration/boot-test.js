@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
-const { analyze } = require('../../app/core/detect');
+const { analyze, cmpVer } = require('../../app/core/detect');
 const { listPool, choose } = require('../../app/core/select');
 const { scan } = require('../../app/core/casescan');
 const { buildPort } = require('../../app/core/port');
@@ -17,7 +17,7 @@ const { FIXTURES } = require('../helpers/fixtures');
 // "Uncaught ReferenceError: PluginManagerEx is not defined @ chrome-extension://<id>/www/js/plugins/FloatVariables.js").
 const TOLERATED = [/FPS\.js/, /PluginManagerEx is not defined @ .*plugins\/FloatVariables\.js/];
 
-function bootTest(portDir, win, script = 'start.sh') {
+function bootTest(portDir, win, script = 'start.sh', extraFlags = []) {
   const idx = fs.existsSync(path.join(portDir, 'www', 'index.html'))
     ? path.join(portDir, 'www', 'index.html') : path.join(portDir, 'index.html');
   const marker = path.join(portDir, '__BOOT__.txt');     // absolute path embedded in the probe — cwd-relative won't do
@@ -35,7 +35,7 @@ if(++t>20){w.writeFileSync(MARK,'TIMEOUT scene='+(s?s.constructor.name:'none'));
     // Launch through start.sh — the user-facing path (cd + exec ./nw),
     // which exercises the wrapper with a RELATIVE $0: old fontconfig ignores
     // a relative FONTCONFIG_FILE, so this pins the wrapper's absolutization.
-    const nw = spawn(path.join(portDir, script), ['--no-sandbox'], { cwd: portDir, stdio: ['ignore', 'ignore', errLog], env: { ...process.env, DISPLAY: win } });
+    const nw = spawn(path.join(portDir, script), ['--no-sandbox', ...extraFlags], { cwd: portDir, stdio: ['ignore', 'ignore', errLog], env: { ...process.env, DISPLAY: win } });
     const deadline = Date.now() + 90e3;
     const iv = setInterval(() => {
       if (fs.existsSync(marker)) { clearInterval(iv); nw.kill('SIGKILL'); resolve(fs.readFileSync(marker, 'utf8')); }
@@ -79,7 +79,13 @@ async function main() {
         runtimeVersion: pick.runtime.version,
         outParent: base, dirName: path.basename(game).slice(0, 40) + ' (Linux)', onExists: 'newname',
       });
-      const out = await bootTest(r.finalDir, ':97');
+      // Modern-Chromium runtimes need two container-workarounds that are ONLY
+      // about this lab (real desktops are unaffected): llvmpipe is WebGL1-
+      // blocklisted (MV is a WebGL1 engine → no scene ever), and the 64 MiB
+      // /dev/shm cannot back Chromium's font-data shared memory (FATAL ENOSPC).
+      const modern = cmpVer(pick.runtime.version, '0.49.0') > 0;
+      const extra = modern ? ['--ignore-gpu-blocklist', '--disable-dev-shm-usage'] : [];
+      const out = await bootTest(r.finalDir, ':97', 'start.sh', extra);
       const v = evaluate(out);
       // Isolated profile guard: every runtime in the pool must honor
       // XDG_CONFIG_HOME or the shared-profile poisoning bug returns.
@@ -92,7 +98,7 @@ async function main() {
       // start-E.sh → start.sh → wrapper → nw_E hardlink exec chain must work.
       const firstVariant = fs.readdirSync(r.finalDir).filter(f => /^start-.+\.sh$/.test(f)).sort()[0];
       if (firstVariant) {
-        const outV = await bootTest(r.finalDir, ':97', firstVariant);
+        const outV = await bootTest(r.finalDir, ':97', firstVariant, extra);
         const vV = evaluate(outV);
         console.log(vV.ok ? 'PASS' : 'FAIL', path.basename(game), `[${firstVariant}]`, '→', vV.scene, '|', vV.errors);
         if (!vV.ok) failed++;

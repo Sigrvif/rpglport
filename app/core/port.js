@@ -79,7 +79,7 @@ function copyTree(src, dst, { onFile, cancel, skip } = {}) {
   while (stack.length) {
     if (cancel && cancel.cancelled) throw new Error('cancelled by user');
     const { s, d } = stack.pop();
-    const st = fs.lstatSync(s);
+    const st = fs.statSync(s); // follow symlinks — a dev checkout's host root symlinks lib/ and nw into _host/
     if (st.isDirectory()) {
       fs.mkdirSync(d, { recursive: true });
       for (const e of fs.readdirSync(s)) {
@@ -144,8 +144,22 @@ async function buildPort(opts) {
   try {
     // 1) Runtime — complete, full-fidelity copy. Chromium needs icudtl.dat,
     // locales/, *.pak, swiftshader/ etc. at run time; nothing may be stripped.
+    // EXCEPT when the runtime IS the tool's own bundle root (dist layout: the
+    // host runtime with the app layered on top — build.json marks it): the
+    // tool's additive files must not leak into the port. (The dev repo mirrors
+    // this via symlinks, but listPool points its host entry at the clean
+    // _host/ dir when one exists, so this mainly guards the dist.)
+    const TOOL_ROOT_SKIP = new Set([
+      'app', 'bin', 'runtimes', 'licenses', 'build.json', 'RPGLPort.sh',
+      'README.md', '.git', '.gitignore', 'test', 'tools', 'docs', 'dist',
+      '_host', 'src', 'run-dev.sh', '.userdata',
+    ]);
+    const skipToolRoot = fs.existsSync(path.join(runtimeDir, 'build.json'))
+      ? (name) => TOOL_ROOT_SKIP.has(name)
+      : null;
     copyTree(runtimeDir, tmp, {
       cancel,
+      skip: skipToolRoot,
       onFile: ({ files, bytes }) => { if (opts.onProgress) opts.onProgress({ stage: 'runtime', files, bytes }); },
     });
     for (const exe of ['nw', 'crashpad_handler', 'chrome_crashpad_handler']) {

@@ -9,26 +9,26 @@ const P = (version, chromiumMajor) => ({
   version, path: `/runtimes/nwjs-v${version}-linux-x64`, source: 'bundled', node: 'x', chromiumMajor,
 });
 
-test('choose: exact match of a legacy detection is skipped — falls forward to the usable floor', () => {
+test('choose: legacy detection ships the NEWEST usable runtime (native era is lost anyway)', () => {
   const pool = [P('0.12.3', 27), P('0.29.0', 65), P('0.48.4', 85), P('0.115.0', 152)];
   const r = choose(pool, '0.29.0', 'MV', '1.6.1');
-  assert.equal(r.runtime.version, '0.48.4');
+  assert.equal(r.runtime.version, '0.115.0');
   assert.equal(r.refused, null);
-  assert.ok(r.notes.some(n => /0\.29\.0.*floor.*0\.48\.4|floor.*0\.29\.0/i.test(n)));
+  assert.ok(r.notes.some(n => /0\.29\.0.*usability floor.*newest/i.test(n)));
   assert.ok(!r.notes.some(n => /exact match/i.test(n)));
+});
+
+test('choose: legacy detection with only sub-floor-newer options still lands on newest usable', () => {
+  const pool = [P('0.12.3', 27), P('0.48.4', 85), P('0.115.0', 152)];
+  const r = choose(pool, '0.29.0', 'MV', '1.6.1');       // detected 0.29 (C65) → newest usable 0.115 (C152)
+  assert.equal(r.runtime.version, '0.115.0');
+  assert.ok(r.warnings.some(w => /plugin/i.test(w)));     // big jump warning still fires
 });
 
 test('choose: all-legacy pool refuses with import guidance', () => {
   const r = choose([P('0.12.3', 27), P('0.29.0', 65)], '0.29.0', 'MV', '1.6.1');
   assert.equal(r.runtime, null);
   assert.ok(r.refused.match(/0\.48\.4/));
-});
-
-test('choose: nearest newer when exact missing; jumps get plugin warning', () => {
-  const pool = [P('0.12.3', 27), P('0.48.4', 85), P('0.115.0', 152)];
-  const r = choose(pool, '0.29.0', 'MV', '1.6.1');       // detected 0.29 (C65) → 0.48.4 (C85): +20
-  assert.equal(r.runtime.version, '0.48.4');
-  assert.ok(r.warnings.some(w => /plugin/i.test(w)));
 });
 
 test('choose: MZ floor refuses below 0.44 (override can reach it); all-legacy pool refuses on usability floor', () => {
