@@ -31,11 +31,14 @@ VERSION=$(node -p "require('./package.json').version")
 cp -a app "$OUT/app"
 cp package.json "$OUT/package.json"   # NW manifest (main/window) — without it nw . shows a blank window
 cp README.md "$OUT/README.md"         # user-facing readme
-mkdir -p "$OUT/bin" "$OUT/licenses/7-Zip"
+mkdir -p "$OUT/bin" "$OUT/licenses/7-Zip" "$OUT/licenses/NW.js" "$OUT/licenses/Chromium"
 curl -fsSL "https://www.7-zip.org/a/7z2602-linux-x64.tar.xz" -o "$WORK/7z.tar.xz"
 tar -xJf "$WORK/7z.tar.xz" -C "$WORK" 7zz License.txt
 mv "$WORK/7zz" "$OUT/bin/7zz"
 mv "$WORK/License.txt" "$OUT/licenses/7-Zip/License.txt"
+# NW.js (MIT) + Chromium (BSD-3) license texts, vendored snapshots from upstream
+cp tools/licenses/LICENSE.nwjs "$OUT/licenses/NW.js/LICENSE.txt"
+cp tools/licenses/LICENSE.chromium "$OUT/licenses/Chromium/LICENSE.txt"
 chmod +x "$OUT/bin/7zz"
 # real credits replace the NW.js tarball's sample placeholder page
 cp app/credits-template.html "$OUT/credits.html"
