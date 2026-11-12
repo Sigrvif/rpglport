@@ -134,3 +134,9 @@ anime-sharing.com
 - **NW.js** (Chromium + Node.js) by the NW.js contributors.
 - RPG Maker is a trademark of Gotcha Gotcha Games. This tool is an independent
   fan project and is not affiliated with or endorsed by them.
+
+## License
+
+MIT — see [LICENSE](LICENSE). The third-party components bundled into release
+packages (NW.js/Chromium runtimes, 7-Zip, the EnigmaVB unpacker, legacy GTK2
+libraries) keep their own licenses, listed in the in-app credits page.

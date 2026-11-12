@@ -1,6 +1,7 @@
 {
   "version": "1.0.17",
   "name": "rpglport",
+  "license": "MIT",
   "main": "app/index.html",
   "chromium-args": "--disable-devtools",
   "scripts": {

@@ -31,6 +31,7 @@ VERSION=$(node -p "require('./package.json').version")
 cp -a app "$OUT/app"
 cp package.json "$OUT/package.json"   # NW manifest (main/window) — without it nw . shows a blank window
 cp README.md "$OUT/README.md"         # user-facing readme
+cp LICENSE "$OUT/LICENSE"             # the tool's own MIT license
 mkdir -p "$OUT/bin" "$OUT/licenses/7-Zip" "$OUT/licenses/NW.js" "$OUT/licenses/Chromium"
 curl -fsSL "https://www.7-zip.org/a/7z2602-linux-x64.tar.xz" -o "$WORK/7z.tar.xz"
 tar -xJf "$WORK/7z.tar.xz" -C "$WORK" 7zz License.txt
