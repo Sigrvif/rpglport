@@ -15,7 +15,13 @@ const IMG_KEYS = {
   systemName: 'img/system', svBattlerName: 'img/sv_actors', svEnemyName: 'img/sv_enemies',
   effectName: 'effects',
 };
-const AUDIO_PARENT = { bgm: 'audio/bgm', bgs: 'audio/bgs', me: 'audio/me', se: 'audio/se' };
+const AUDIO_PARENT = { bgm: 'audio/bgm', bgs: 'audio/bgs', me: 'audio/me', se: 'audio/se', battleBgm: 'audio/bgm', victoryMe: 'audio/me', defeatMe: 'audio/me' };
+// MV/MZ event commands carry asset names inside flat `parameters` arrays — no
+// collectible KEY exists, so the table above alone misses them. Codes verified
+// against the stock interpreter: 231 Show Picture (name at parameters[1]),
+// 132/133/134 Change Battle BGM / Victory ME / Defeat ME and 241/245/249/250
+// Play BGM/BGS/ME/SE (audio object at parameters[0]), 261 Play Movie.
+const EVENT_AUDIO_DIRS = { 132: 'audio/bgm', 133: 'audio/me', 134: 'audio/me', 241: 'audio/bgm', 245: 'audio/bgs', 249: 'audio/me', 250: 'audio/se' };
 const LITERAL_RE = /(img|audio|movies|effects|fonts)\/[^\s"'`,;()<>[\]\\]+?\.(png|jpe?g|ogg|m4a|rpgmvo|rpgmvw|wav|mp3|mp4|webm|json|ttf|otf|woff2?)/gi;
 
 // Recursive file index: lower(rel) → [actualRels]. Case-distinct siblings on
@@ -82,6 +88,16 @@ function collectRefs(payloadRoot) {
       return;
     }
     if (node && typeof node === 'object') {
+      if (typeof node.code === 'number' && Array.isArray(node.parameters)) {
+        if (node.code === 231 && typeof node.parameters[1] === 'string' && node.parameters[1]) {
+          addImg('img/pictures', node.parameters[1]);
+        } else if (node.code === 261 && typeof node.parameters[0] === 'string' && node.parameters[0]) {
+          add(`movies/${node.parameters[0]}.webm`);
+          add(`movies/${node.parameters[0]}.mp4`);
+        } else if (EVENT_AUDIO_DIRS[node.code] && node.parameters[0] && typeof node.parameters[0].name === 'string' && node.parameters[0].name) {
+          addAudio(EVENT_AUDIO_DIRS[node.code], node.parameters[0].name);
+        }
+      }
       for (const [k, v] of Object.entries(node)) visit(v, k, key);
       return;
     }
@@ -91,7 +107,7 @@ function collectRefs(payloadRoot) {
     }
   };
   for (const f of walkFiles(path.join(payloadRoot, 'data'), n => n.endsWith('.json'))) {
-    try { visit(JSON.parse(fs.readFileSync(f, 'utf8')), null, null); }
+    try { visit(JSON.parse(fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, '')), null, null); }
     catch { scanErrors++; }
   }
 
@@ -105,7 +121,7 @@ function collectRefs(payloadRoot) {
   if (fs.existsSync(pkg) && !literalFiles.includes(pkg)) literalFiles.push(pkg);
   for (const f of literalFiles) {
     let txt;
-    try { txt = fs.readFileSync(f, 'utf8'); } catch { continue; }
+    try { txt = fs.readFileSync(f, 'utf8').replace(/^\uFEFF/, ''); } catch { continue; }
     for (const m of txt.replace(/\\/g, '/').match(LITERAL_RE) || []) add(m);
     // Plugin note-tags that name assets without ever forming an img/ path:
     // Ayatam 歩行グラフィック拡張MVMZ lives in event comments like
@@ -149,7 +165,8 @@ function scan(payloadRoot) {
     }
   }
 
-  const fixes = [], duplicates = [], conflicts = [], missing = [];
+  const duplicates = [], conflicts = [], missing = [];
+  const allFixes = [];
   const missingByBase = new Map(); // base → Map(refAsWritten → count)
   for (const [lower, casingMap] of refCounts) {
     const onDisk = files.get(lower);
@@ -170,7 +187,7 @@ function scan(payloadRoot) {
     const topCount = ranked[0][1];
     const tied = ranked.filter(e => e[1] === topCount).length > 1;
     const canonical = tied ? actual : ranked[0][0];
-    if (canonical !== actual) fixes.push({ actual, ref: canonical });
+    if (canonical !== actual) allFixes.push({ actual, ref: canonical });
     // materialize every referenced casing except the canonical one — including
     // the old disk casing when it was itself referenced (otherwise that
     // reference dangles after the rename)
@@ -188,7 +205,7 @@ function scan(payloadRoot) {
     // Windows loaded them through its case-insensitive open; on Linux the
     // loader's lookup is case-sensitive, so the file must carry the referenced
     // casing.
-    const ENC_EXTS = ['.rpgmvp', '.rpgmvo', '.rpgmvm', '.png_', '.jpg_', '.jpeg_', '.ogg_', '.m4a_', '.wav_', '.mp3_', '.webm_'];
+    const ENC_EXTS = ['.rpgmvp', '.rpgmvo', '.rpgmvm', '.png_', '.jpg_', '.jpeg_', '.ogg_', '.m4a_', '.wav_', '.mp3_', '.webm_', '.webm', '.mp4'];
     const enc = ENC_EXTS.find(e => files.get(base + e)) || null;
     if (!enc) continue;
     const encDisk = files.get(base + enc);
@@ -203,16 +220,19 @@ function scan(payloadRoot) {
     const tied = ranked.length > 1 && ranked[0][1] === ranked[1][1];
     const diskStem = encDisk[0].slice(0, encDisk[0].length - enc.length);
     const canonical = (tied ? diskStem : ranked[0][0]) + enc;
-    if (canonical !== encDisk[0]) fixes.push({ actual: encDisk[0], ref: canonical });
+    if (canonical !== encDisk[0]) allFixes.push({ actual: encDisk[0], ref: canonical });
     for (const s of stems.keys()) if (s + enc !== canonical) duplicates.push({ target: canonical, as: s + enc });
     continue;
   }
   for (const [base, agg] of missingByBase) {
-    if (diskBases.has(base)) continue;                                  // sibling on disk → not missing
+    if (diskBases.has(base)) continue;                                   // sibling on disk → not missing
     let best = null, bestN = -1;
     for (const [c, n] of agg) if (n > bestN) { best = c; bestN = n; }
     missing.push(best);
   }
+  // a fix can be reached twice (exact-match AND an enc-sibling branch when the
+  // disk extension itself is a probed candidate, e.g. plain .webm movies)
+  const fixes = [...new Map(allFixes.map(f => [`${f.actual}|${f.ref}`, f])).values()];
   return {
     fixes, duplicates, conflicts, missing, scanErrors,
     counts: { fixes: fixes.length + duplicates.length, warnings: conflicts.length + missing.length },
@@ -233,4 +253,4 @@ function destIsCaseInsensitive(dir) {
   }
 }
 
-module.exports = { scan, destIsCaseInsensitive };
+module.exports = { scan, collectRefs, destIsCaseInsensitive };

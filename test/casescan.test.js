@@ -181,3 +181,48 @@ test("acg note tag with subdir name resolves under img/characters", () => {
   assert.deepEqual(r.fixes, []);
   assert.equal(r.missing.length, 0);   // exact case on disk and in the tag → clean
 });
+
+test("MV Show Picture event refs (code 231 parameters) drive case fixes — BOM tolerated", () => {
+  // game-mv-6: data says command_load, disk is command_Load.rpgmvp; Windows
+  // resolved it case-insensitively. The ref lives in a Show Picture command
+  // (parameters array — no pictureName key) inside a BOM-prefixed data file.
+  const root = mkGame({
+    "img/pictures/command_Load.rpgmvp": "x",
+    "data/Map001.json": "\uFEFF" + JSON.stringify({
+      events: [null, { pages: [{ list: [{ code: 231, indent: 1, parameters: [50, "command_load", 0, 0, 706, 10] }] }] }],
+    }),
+  });
+  const r = scan(root);
+  assert.deepEqual(r.fixes, [{ actual: "img/pictures/command_Load.rpgmvp", ref: "img/pictures/command_load.rpgmvp" }]);
+  assert.equal(r.scanErrors, 0);
+});
+
+test("event audio codes (241/245/249/250) and system-change codes (132/133/134) collect names", () => {
+  const root = mkGame({
+    "audio/bgm/Theme1.rpgmvo": "x",                    // drift: ref says theme1 (via code 241)
+    "audio/se/Cursor-Sound.rpgmvo": "x",               // drift: ref says cursor-sound (via code 250)
+    "data/Map001.json": JSON.stringify({
+      events: [null, { pages: [{ list: [
+        { code: 241, parameters: [{ name: "theme1", volume: 90, pitch: 100 }] },
+        { code: 250, parameters: [{ name: "cursor-sound", volume: 90, pitch: 100 }] },
+      ] }] }],
+    }),
+    "data/System.json": JSON.stringify({ battleBgm: { name: "battle-1", volume: 90, pitch: 100 }, victoryMe: { name: "victory-1", volume: 90, pitch: 100 } }),
+    "audio/bgm/battle-1.rpgmvo": "x",                   // exact case → clean; parent key battleBgm now mapped
+    "audio/me/victory-1.rpgmvo": "x",                   // exact case → clean; victoryMe now mapped
+  });
+  const r = scan(root);
+  const refs = [r.fixes.map(f => f.ref), r.duplicates.map(d => d.as), r.missing];
+  assert.ok(r.fixes.some(f => f.ref === "audio/bgm/theme1.rpgmvo"), "bgm fix: " + JSON.stringify(r.fixes));
+  assert.ok(r.fixes.some(f => f.ref === "audio/se/cursor-sound.rpgmvo"), "se fix");
+  assert.ok(!r.missing.some(m => /battle-1|victory-1/.test(m)), "System.json audio names collected");
+});
+
+test("Play Movie event refs (code 261) probe webm/mp4 and fix drift", () => {
+  const root = mkGame({
+    "movies/Intro.webm": "x",
+    "data/Map001.json": JSON.stringify({ events: [null, { pages: [{ list: [{ code: 261, parameters: ["intro"] }] }] }] }),
+  });
+  const r = scan(root);
+  assert.deepEqual(r.fixes, [{ actual: "movies/Intro.webm", ref: "movies/intro.webm" }]);
+});
