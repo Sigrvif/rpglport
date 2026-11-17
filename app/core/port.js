@@ -20,8 +20,9 @@ const SKIP_DIRS = new Set(['locales', 'swiftshader']);
 // version-locked to the bundled Chromium). Original Windows runtime files
 // (*.dll, Game.exe, launcher stubs) are deliberately SHIPPED as inert data:
 // games with launcher-integrity DRM hash-check them from their core scripts
-// and silently self-exit when they are missing or differ (verified: game-mz-3
-// hashed libGLESv2.dll and process.exit()ed on mismatch). Their presence
+// and silently self-exit when they are missing or differ (verified on a
+// pool game that hashed libGLESv2.dll and process.exit()ed on mismatch).
+// Their presence
 // makes such checks pass legitimately; they are never executed on Linux.
 function isWinRuntime(name, isDir) {
   const n = name.toLowerCase();

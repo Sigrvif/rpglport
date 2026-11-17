@@ -183,7 +183,7 @@ test("acg note tag with subdir name resolves under img/characters", () => {
 });
 
 test("MV Show Picture event refs (code 231 parameters) drive case fixes — BOM tolerated", () => {
-  // game-mv-6: data says command_load, disk is command_Load.rpgmvp; Windows
+  // One pool game: data says command_load, disk is command_Load.rpgmvp; Windows
   // resolved it case-insensitively. The ref lives in a Show Picture command
   // (parameters array — no pictureName key) inside a BOM-prefixed data file.
   const root = mkGame({
