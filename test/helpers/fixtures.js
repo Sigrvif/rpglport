@@ -1,17 +1,26 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const BASE = '<test-games-pool>';
-const FIXTURES = [
-  `${BASE}/MV/game-mv-1`,
-  `${BASE}/MV/game-mv-2`,
-  `${BASE}/MV/game-mv-3`,
-  `${BASE}/MV/game-mv-4`,
-  `${BASE}/MV/game-mv-5`,
-  `${BASE}/MZ/game-mz-1`,
-  `${BASE}/MZ/game-mz-2`,
-];
-function fixtureDirs() { return FIXTURES.filter(d => fs.existsSync(path.join(d, 'Game.exe'))); }
+// Local test games, if any: set RPGLPORT_TEST_GAMES to a directory holding
+// MV/ and/or MZ/ subfolders of RPG Maker MV/MZ games (each with a Game.exe).
+// Every game found is used as a live fixture; nothing is hardcoded, and no
+// game data ever enters the repository — tests skip the live parts when the
+// variable is unset or a game is absent.
+const BASE = process.env.RPGLPORT_TEST_GAMES || '';
+
+function fixtureDirs() {
+  if (!BASE) return [];
+  const out = [];
+  for (const engine of ['MV', 'MZ']) {
+    const dir = path.join(BASE, engine);
+    if (!fs.existsSync(dir)) continue;
+    for (const name of fs.readdirSync(dir).sort()) {
+      const d = path.join(dir, name);
+      if (fs.existsSync(path.join(d, 'Game.exe'))) out.push(d);
+    }
+  }
+  return out;
+}
 
 function utf16(s) {
   const b = Buffer.alloc(s.length * 2);
@@ -42,4 +51,4 @@ function synthPE({ machine = 0x8664, sections = [], utf16: blob = Buffer.alloc(0
   return buf;
 }
 
-module.exports = { fixtureDirs, synthPE, utf16, FIXTURES };
+module.exports = { fixtureDirs, synthPE, utf16 };

@@ -34,7 +34,7 @@ function mkMV(base, name = 'Test Game') {
 test('slugify', () => {
   // NFKD strips kana/kanji (no transliteration — by design); ASCII slugs survive.
   // All-Japanese names fall back to a constant slug (NOTES.txt records the original).
-  assert.equal(slugify('game-mz-2 1.5'), '1-5');
+  assert.equal(slugify('サンプルゲーム 1.5'), '1-5');  // CJK stripped, digits kept
   assert.equal(slugify('My GAME!'), 'my-game');
   assert.equal(slugify('アニマ'), 'rpgl-port-game');                           // never empty
 });

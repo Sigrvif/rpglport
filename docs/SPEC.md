@@ -24,7 +24,7 @@ Existing assets this design builds on:
 
 - `rpglport.py` — validated CLI proof-of-concept (detection, selection, execstack fix,
   port assembly). Its logic ports 1:1 to JavaScript.
-- `Linux Port testing/EnigmaNodeUnpacker/` — pure-Node, zero-dependency Enigma Virtual
+- The upstream `EnigmaNodeUnpacker` source — pure-Node, zero-dependency Enigma Virtual
   Box unpacker (v4.10–10.80, x86/x64, path-traversal protection, ~1s/GB). Vendored.
 
 ## 2. Non-Goals
@@ -316,8 +316,8 @@ lists go to the log drawer and `NOTES.txt`.
   bare-name extension candidates, plugin literal-path references including
   backslash-separated and non-ASCII/Japanese filenames, malformed data JSON,
   case-insensitive destination probe).
-- **Integration:** port the local MV/MZ fixture games (currently five: 3 MV + 2 MZ
-  under `Linux Port testing/`; Ace-era games are out of scope); boot each under `Xvfb`
+- **Integration:** port the local MV/MZ fixture games (the live pool under the
+  `RPGLPORT_TEST_GAMES` root; Ace-era games are out of scope); boot each under `Xvfb`
   with an injected boot-probe (`require('fs')` marker asserting
   `Scene_Boot`/`Scene_Title`), then restore pristine index.html. This mirrors the
   manual verification already performed. The scanner additionally runs over all
