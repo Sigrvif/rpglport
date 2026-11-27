@@ -25,8 +25,11 @@ function readEngineVersion(jsPath) {
 
 function layoutOf(dir) {
   const has = p => fs.existsSync(path.join(dir, p));
-  if ((has('package.json') || has('Game.exe') || has('nw.exe')) && has('www/index.html')) return 'MV';
   if (has('index.html') && has('js/rmmz_core.js')) return 'MZ';
+  if ((has('package.json') || has('Game.exe') || has('nw.exe')) && has('www/index.html')) return 'MV';
+  // MV deployed loose (MZ-style: index.html at the root, no www/ wrapper) —
+  // 姫騎士エレーナ-style deployments; the exe may carry the game's title.
+  if (has('index.html') && has('js/rpg_core.js')) return 'MV';
   return null;
 }
 
@@ -36,10 +39,13 @@ function analyze(dir) {
   let engineVersion = null;
   let detectedNW = null, arch = null;
   let payloadRoot = null, packageJsonPath = null;
+  // MV keeps its payload under www/ in the stock deployment; loose MV is its
+  // own payload root.
+  const mvLoose = engine === 'MV' && !fs.existsSync(path.join(dir, 'www', 'index.html'));
 
   if (engine === 'MV') {
-    engineVersion = readEngineVersion(path.join(dir, 'www/js/rpg_core.js'));
-    payloadRoot = path.join(dir, 'www');
+    engineVersion = readEngineVersion(path.join(dir, mvLoose ? 'js/rpg_core.js' : 'www/js/rpg_core.js'));
+    payloadRoot = mvLoose ? dir : path.join(dir, 'www');
     packageJsonPath = path.join(dir, 'package.json');
   } else if (engine === 'MZ') {
     engineVersion = readEngineVersion(path.join(dir, 'js/rmmz_core.js'));
@@ -53,7 +59,11 @@ function analyze(dir) {
   // bare full chromium versions live in Game.exe/nw.dll; node.js/v strings in
   // MV's node.dll.
   const browser = [], nodeMods = [];
-  for (const f of ['Game.exe', 'nw.exe', 'nw.dll']) {
+  // Browser-process stamps live in the main exe (Game.exe, or any game-titled
+  // exe — MZ deployments name it after the project) and in nw.dll.
+  const mainExe = fs.readdirSync(dir).find(f => /\.exe$/i.test(f)) || null;
+  const browserFiles = [...new Set([...(mainExe ? [mainExe] : []), 'nw.dll'])];
+  for (const f of browserFiles) {
     try {
       const buf = fs.readFileSync(path.join(dir, f));
       const pe = readPE(buf);
@@ -105,14 +115,14 @@ function analyze(dir) {
   // tools or genuine variants the port cannot run — that deserves a warning,
   // not silence.
   let extraExes = [];
-  if (engine) {
+  if (engine && mainExe) {
     let mainHash = null;
     try {
-      mainHash = crypto.createHash('md5').update(fs.readFileSync(path.join(dir, 'Game.exe'))).digest('hex');
-    } catch { /* no Game.exe (MZ or app.nw layouts) — nothing to compare */ }
+      mainHash = crypto.createHash('md5').update(fs.readFileSync(path.join(dir, mainExe))).digest('hex');
+    } catch { /* unreadable main exe — nothing to compare */ }
     if (mainHash) {
       for (const f of fs.readdirSync(dir)) {
-        if (!/\.exe$/i.test(f) || /^Game\.exe$/i.test(f) || /^nw\.exe$/i.test(f)) continue;
+        if (!/\.exe$/i.test(f) || f === mainExe || /^nw\.exe$/i.test(f)) continue;
         try {
           const h = crypto.createHash('md5').update(fs.readFileSync(path.join(dir, f))).digest('hex');
           extraExes.push({ name: f, identical: h === mainHash });

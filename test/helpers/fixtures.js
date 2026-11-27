@@ -2,7 +2,7 @@
 const fs = require('fs');
 const path = require('path');
 // Local test games, if any: set RPGLPORT_TEST_GAMES to a directory holding
-// MV/ and/or MZ/ subfolders of RPG Maker MV/MZ games (each with a Game.exe).
+// MV/ and/or MZ/ subfolders of RPG Maker MV/MZ games (each with any root exe).
 // Every game found is used as a live fixture; nothing is hardcoded, and no
 // game data ever enters the repository — tests skip the live parts when the
 // variable is unset or a game is absent.
@@ -16,7 +16,11 @@ function fixtureDirs() {
     if (!fs.existsSync(dir)) continue;
     for (const name of fs.readdirSync(dir).sort()) {
       const d = path.join(dir, name);
-      if (fs.existsSync(path.join(d, 'Game.exe'))) out.push(d);
+      // any root exe counts: deployments may name it after the game, not Game.exe
+      try {
+        const hasExe = fs.readdirSync(d).some(n => /\.exe$/i.test(n));
+        if (hasExe) out.push(d);
+      } catch { /* not a directory */ }
     }
   }
   return out;

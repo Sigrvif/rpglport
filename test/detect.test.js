@@ -23,7 +23,8 @@ test('real fixtures: engine + detectedNW', { skip: fixtureDirs().length === 0 },
     assert.ok(/^\d+\.\d+\.\d+(-[\w.]+)?$/.test(r.detectedNW), d);
     if (r.engine === 'MV') {
       assert.ok(/^\d+\.\d+\.\d+$/.test(r.engineVersion), d);
-      assert.equal(r.payloadRoot, path.join(d, 'www'));
+      // stock MV deploys under www/; loose deployments are their own root
+      assert.ok([path.join(d, 'www'), d].includes(r.payloadRoot), d);
     }
   }
 });
@@ -67,4 +68,20 @@ test('synthetic: browser-tier NW stamps outrank numerically higher node-tier', (
   const r = analyze(d);
   assert.equal(r.engine, 'MZ');
   assert.equal(r.detectedNW, '0.48.4'); // browser tier wins despite node tier's 0.55.0
+});
+
+test("synthetic: loose MV layout (no www/, game-titled exe) detects as MV", () => {
+  // 姫騎士エレーナ-style deployment: index.html at the root, js/rpg_core.js,
+  // exe named after the game — MZ-style packaging of an MV payload.
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), "det-loose-"));
+  fs.mkdirSync(path.join(d, "js"), { recursive: true });
+  fs.writeFileSync(path.join(d, "index.html"), "<html></html>");
+  fs.writeFileSync(path.join(d, "js/rpg_core.js"), 'Utils.RPGMAKER_VERSION = "1.6.1";');
+  fs.writeFileSync(path.join(d, "package.json"), JSON.stringify({ name: "x", main: "index.html" }));
+  fs.writeFileSync(path.join(d, "\u59eb\u9a0e\u58eb.exe"), synthPE({ sections: [{ name: ".text" }] }));
+  const r = analyze(d);
+  assert.equal(r.engine, "MV");
+  assert.equal(r.engineVersion, "1.6.1");
+  assert.equal(r.payloadRoot, d);            // the root IS the payload
+  assert.equal(r.packageJsonPath, path.join(d, "package.json"));
 });

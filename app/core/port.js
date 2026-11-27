@@ -302,7 +302,9 @@ async function buildPort(opts) {
     // there in case a check targets something exotic we cannot anticipate.
     const coreScripts = info.engine === 'MZ'
       ? ['js/rmmz_core.js', 'js/rmmz_managers.js', 'js/rmmz_objects.js', 'js/rmmz_scenes.js']
-      : ['www/js/rpg_core.js', 'www/js/rpg_managers.js', 'www/js/rpg_objects.js', 'www/js/rpg_scenes.js'];
+      : (info.payloadRoot === gameDir
+        ? ['js/rpg_core.js', 'js/rpg_managers.js', 'js/rpg_objects.js', 'js/rpg_scenes.js']   // loose MV
+        : ['www/js/rpg_core.js', 'www/js/rpg_managers.js', 'www/js/rpg_objects.js', 'www/js/rpg_scenes.js']);
     for (const rel of coreScripts) {
       const f = path.join(tmp, rel);
       try {
@@ -321,7 +323,7 @@ async function buildPort(opts) {
     const baseName = dirName.replace(/\s*\(Linux\)\s*$/, '');
     const out = {
       name: slugify(baseName),
-      main: pkg.main || (info.engine === 'MV' ? 'www/index.html' : 'index.html'),
+      main: pkg.main || (info.engine === 'MZ' || info.payloadRoot === gameDir ? 'index.html' : 'www/index.html'),
       window: pkg.window || {},
     };
     if (pkg['js-flags']) out['js-flags'] = pkg['js-flags'];
